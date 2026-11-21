@@ -1,15 +1,7 @@
-name: Build Android APK
+﻿name: Build Android APK
 
 on:
   workflow_dispatch:
-  push:
-    branches: [master, main]
-    paths:
-      - 'lib/**'
-      - 'android/**'
-      - 'pubspec.yaml'
-      - 'pubspec.lock'
-      - '.github/workflows/build-apk.yml'
 
 permissions:
   contents: read
@@ -51,9 +43,7 @@ jobs:
             echo "sdkmanager not found; AGP will download the NDK on demand"
           fi
 
-      # android/app/build.gradle 无条件读取 android/key.properties，
-      # 缺失时 Gradle 在配置阶段就会失败，所以这里先生成一套临时签名。
-      - name: Generate signing key
+      # android/app/build.gradle 鏃犳潯浠惰鍙?android/key.properties锛?      # 缂哄け鏃?Gradle 鍦ㄩ厤缃樁娈靛氨浼氬け璐ワ紝鎵€浠ヨ繖閲屽厛鐢熸垚涓€濂椾复鏃剁鍚嶃€?      - name: Generate signing key
         run: |
           set -e
           PASS=$(openssl rand -hex 16)
@@ -69,9 +59,8 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
-      # build.gradle 里配置了 ABI 分包（arm64-v8a / x86_64 + universal），
-      # flutter 工具有时会因为找不到 app-release.apk 而返回非 0，这里以实际产物为准。
-      - name: Build APKs
+      # build.gradle 閲岄厤缃簡 ABI 鍒嗗寘锛坅rm64-v8a / x86_64 + universal锛夛紝
+      # flutter 宸ュ叿鏈夋椂浼氬洜涓烘壘涓嶅埌 app-release.apk 鑰岃繑鍥為潪 0锛岃繖閲屼互瀹為檯浜х墿涓哄噯銆?      - name: Build APKs
         run: |
           set +e
           flutter build apk --release
