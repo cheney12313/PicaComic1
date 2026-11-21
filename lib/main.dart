@@ -143,7 +143,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       } finally {}
     }
     listenMouseSideButtonToBack();
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.manual,
+      overlays: SystemUiOverlay.values,
+    );
     WidgetsBinding.instance.addObserver(this);
     notifications.init();
     if (appdata.settings[12] == "1") {
@@ -161,8 +164,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   (ColorScheme, ColorScheme) _generateColorSchemes(
       ColorScheme? light, ColorScheme? dark) {
     Color? color;
-    if (int.parse(appdata.settings[27]) != 0) {
-      color = colors[int.parse(appdata.settings[27]) - 1];
+    final colorIndex = int.parse(appdata.settings[27]);
+    final customColor = int.tryParse(appdata.settings[90]) ?? 0;
+    if (colorIndex == customThemeColorIndex && customColor != 0) {
+      // 自定义 Material 取色：用用户选的种子色生成整套 Material 3 配色
+      color = Color(customColor);
+    } else if (colorIndex > 0 && colorIndex <= colors.length) {
+      color = colors[colorIndex - 1];
     } else {
       color = light?.primary ?? Colors.blueAccent;
     }

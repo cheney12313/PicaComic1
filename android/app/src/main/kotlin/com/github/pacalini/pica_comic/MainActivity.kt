@@ -74,8 +74,58 @@ class MainActivity: FlutterFragmentActivity() {
             res.success(flag)
         }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger,"pica_comic/settings").setMethodCallHandler{
+        // Read battery / network state / status bar height for the reader's self-drawn status bar.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger,"pica_comic/battery").setMethodCallHandler{
                 call, res ->
+            if (call.method == "status") {
+                val bm = getSystemService(BATTERY_SERVICE) as android.os.BatteryManager
+                val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                val charging = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) bm.isCharging else false
+                val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+                val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+                val wifi = caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
+                var cellular = caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) == true
+                var label = ""
+                try {
+                    val tm = getSystemService(TELEPHONY_SERVICE) as android.telephony.TelephonyManager
+                    // 系统状态栏只要插卡就一直显示信号，不看当前数据走的是 wifi 还是流量
+                    if (tm.simState == android.telephony.TelephonyManager.SIM_STATE_READY) {
+                        cellular = true
+                    }
+                    label = when (tm.dataNetworkType) {
+                        android.telephony.TelephonyManager.NETWORK_TYPE_NR -> "5G"
+                        android.telephony.TelephonyManager.NETWORK_TYPE_LTE -> "4G"
+                        android.telephony.TelephonyManager.NETWORK_TYPE_UMTS,
+                        android.telephony.TelephonyManager.NETWORK_TYPE_HSPA,
+                        android.telephony.TelephonyManager.NETWORK_TYPE_HSDPA,
+                        android.telephony.TelephonyManager.NETWORK_TYPE_HSPAP -> "3G"
+                        android.telephony.TelephonyManager.NETWORK_TYPE_EDGE,
+                        android.telephony.TelephonyManager.NETWORK_TYPE_GPRS -> "2G"
+                        else -> ""
+                    }
+                } catch (_: Exception) {
+                    // 没有 READ_PHONE_STATE 权限时拿不到网络制式，留空
+                }
+                val resId = resources.getIdentifier("status_bar_height", "dimen", "android")
+                val px = if (resId > 0) resources.getDimensionPixelSize(resId) else 0
+                res.success(mapOf(
+                    "level" to level, "charging" to charging, "wifi" to wifi,
+                    "cellular" to cellular, "label" to label, "heightPx" to px))
+                return@setMethodCallHandler
+            }
+            if (call.method == "statusBarHeight") {
+                val resId = resources.getIdentifier("status_bar_height", "dimen", "android")
+                val px = if (resId > 0) resources.getDimensionPixelSize(resId) else 0
+                res.success(mapOf("px" to px))
+                return@setMethodCallHandler
+            }
+            val bm = getSystemService(BATTERY_SERVICE) as android.os.BatteryManager
+            val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            val charging = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) bm.isCharging else false
+            res.success(mapOf("level" to level, "charging" to charging))
+        }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger,"pica_comic/settings").setMethodCallHandler{                call, res ->
             if(call.method == "link") {
                 val intent = Intent(
                     android.provider.Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS,

@@ -346,8 +346,8 @@ extension ToolBar on ComicReadingPage {
       child: StateBuilder<ComicReadingPageLogic>(
         id: "ToolBar",
         builder: (logic) => AnimatedSwitcher(
-          duration: const Duration(milliseconds: 150),
-          reverseDuration: const Duration(milliseconds: 150),
+          duration: const Duration(milliseconds: 120),
+          reverseDuration: const Duration(milliseconds: 120),
           switchInCurve: Curves.fastOutSlowIn,
           child: comicReadingPageLogic.tools
               ? Material(
@@ -357,7 +357,11 @@ extension ToolBar on ComicReadingPage {
                       Theme.of(context).colorScheme.shadow.withOpacity(0.3),
                   child: SizedBox(
                     width: MediaQuery.of(context).size.width,
-                    child: Row(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const ReaderStatusBar(),
+                        Row(
                       children: [
                         Padding(
                           padding: const EdgeInsets.fromLTRB(10, 0, 10, 0),
@@ -400,7 +404,9 @@ extension ToolBar on ComicReadingPage {
                         ),
                       ],
                     ),
-                  ).paddingTop(MediaQuery.of(context).padding.top),
+                      ],
+                    ),
+                  ),
                 )
               : const SizedBox(
                   width: 0,
@@ -411,7 +417,10 @@ extension ToolBar on ComicReadingPage {
                 begin: const Offset(0, -1), end: const Offset(0, 0));
             return SlideTransition(
               position: tween.animate(animation),
-              child: child,
+              child: FadeTransition(
+                opacity: animation,
+                child: child,
+              ),
             );
           },
         ),

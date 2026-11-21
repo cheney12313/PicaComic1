@@ -2,6 +2,7 @@ library pica_reader;
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -44,23 +45,82 @@ import 'package:pica_comic/tools/translations.dart';
 
 import '../jm/jm_comments_page.dart';
 
+
 part 'eps_view.dart';
-
 part 'image_view.dart';
-
 part 'image.dart';
-
 part 'touch_control.dart';
-
 part 'reading_logic.dart';
-
 part 'tool_bar.dart';
-
 part 'reading_type.dart';
-
 part 'reading_settings.dart';
 
+part 'reader_status_bar.dart';
 part 'reading_data.dart';
+
+/// 阅读器是否使用深色背景。
+///
+/// 注意不能只看 App 主题：阅读器可以单独开"深色背景"，
+/// 也可能主题是浅色但整页是深色图片。
+bool readerIsDark([BuildContext? context]) {
+  if (appdata.appSettings.useDarkBackground) {
+    return true;
+  }
+  final ctx = context ?? App.globalContext;
+  if (ctx != null) {
+    return Theme.of(ctx).brightness == Brightness.dark;
+  }
+  return WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+      Brightness.dark;
+}
+
+/// 按阅读器背景深浅生成系统栏样式（状态栏图标反色）。
+SystemUiOverlayStyle readerOverlayStyle(bool dark) {
+  return (dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
+      .copyWith(
+    statusBarColor: Colors.transparent,
+    systemNavigationBarColor: Colors.transparent,
+    statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
+    statusBarBrightness: dark ? Brightness.dark : Brightness.light,
+    systemNavigationBarIconBrightness:
+        dark ? Brightness.light : Brightness.dark,
+  );
+}
+
+SystemUiOverlayStyle? _lastReaderOverlayStyle;
+
+/// 应用阅读器系统栏样式（去重，避免每次 build 都调平台通道）。
+void applyReaderOverlayStyle([BuildContext? context]) {
+  final style = readerOverlayStyle(readerIsDark(context));
+  if (_lastReaderOverlayStyle == style) {
+    return;
+  }
+  _lastReaderOverlayStyle = style;
+  SystemChrome.setSystemUIOverlayStyle(style);
+}
+
+/// 显示系统栏（沉浸阅读中点一下屏幕时调用）。
+///
+/// 用 manual + 全部 overlay 显式显示：部分 ROM（MIUI/HyperOS）从 immersive
+/// 切回 edgeToEdge 时不会自动恢复状态栏，manual 是明确的显式请求。
+void showReaderSystemBars() {
+  SystemChrome.setEnabledSystemUIMode(
+    SystemUiMode.manual,
+    overlays: SystemUiOverlay.values,
+  );
+  applyReaderOverlayStyle();
+}
+
+/// 隐藏系统栏（回到沉浸阅读）。
+void hideReaderSystemBars() {
+  // 阅读器内系统栏始终隐藏，改由 ReaderStatusBar 自绘（可自由做动画）
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+}
+
+
+
+
+
 
 ///阅读器
 class ComicReadingPage extends StatelessWidget {
@@ -198,8 +258,15 @@ class ComicReadingPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 此时系统状态栏还是可见的，先记下它的高度，供自绘状态栏对齐刘海/挖孔
+    ReaderStatusBar.rememberHeight(MediaQuery.of(context).padding.top);
+    // 让状态栏/导航栏图标跟随阅读器背景反色（沉浸模式切回系统栏时也正确）
+    applyReaderOverlayStyle(context);
     return StateBuilder<ComicReadingPageLogic>(initState: (logic) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
+      // 沉浸阅读：进入时隐藏系统栏，点屏幕再显示（showReaderSystemBars）
+      // 阅读器内系统栏始终隐藏，改由 ReaderStatusBar 自绘（可自由做动画）
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      applyReaderOverlayStyle(context);
       if (appdata.settings[14] == "1") {
         setKeepScreenOn();
       }
@@ -224,11 +291,17 @@ class ComicReadingPage extends StatelessWidget {
                 ?.setDarkTheme());
       }
     }, dispose: (logic) {
+      // 退出阅读器后让主界面重新决定系统栏样式
+      _lastReaderOverlayStyle = null;
       //清除缓存并减小最大缓存
       BaseImageProvider.clearCache();
       BaseImageProvider.setCacheSizeLimit(50 * 1024 * 1024);
       logic.clearPhotoViewControllers();
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      // 退出阅读器：用 manual 显式恢复系统栏（部分 ROM 从 immersive 切 edgeToEdge 不会恢复）
+      SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.manual,
+        overlays: SystemUiOverlay.values,
+      );
       SystemChrome.setPreferredOrientations(DeviceOrientation.values);
       if (logic.listenVolume != null) {
         logic.listenVolume!.stop();
@@ -271,7 +344,9 @@ class ComicReadingPage extends StatelessWidget {
           color: useDarkBackground ? Colors.white : null,
           fontSize: 16,
         ),
-        child: Scaffold(
+        child: AnnotatedRegion<SystemUiOverlayStyle>(
+          value: readerOverlayStyle(readerIsDark(context)),
+          child: Scaffold(
           backgroundColor: useDarkBackground ? Colors.black : null,
           endDrawerEnableOpenDragGesture: false,
           key: _scaffoldKey,
@@ -364,7 +439,8 @@ class ComicReadingPage extends StatelessWidget {
             } else {
               return buildErrorView(logic, context);
             }
-          }),
+          }),),
+        
         ),
       );
     });

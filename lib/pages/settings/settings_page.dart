@@ -1,10 +1,12 @@
 library pica_settings;
 
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:image/image.dart' as img;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -333,14 +335,43 @@ class _SettingsPageState extends State<SettingsPage> implements PopEntry{
     return const Placeholder();
   }
 
+  /// 打开自定义 Material 取色器；选完颜色后立即应用到全局主题
+  Future<void> showCustomColorPicker() async {
+    final stored = int.tryParse(appdata.settings[90]) ?? 0;
+    final initial = stored != 0
+        ? HSVColor.fromColor(Color(stored))
+        : HSVColor.fromColor(Theme.of(context).colorScheme.primary);
+    final result = await showDialog<_CustomColorResult>(
+      context: context,
+      builder: (context) => _CustomColorDialog(initial: initial),
+    );
+    if (result == null) {
+      return;
+    }
+    if (result.reset) {
+      // 重置：清掉自定义色，恢复跟随系统的动态取色
+      appdata.settings[90] = "0";
+      appdata.settings[27] = "0";
+    } else if (result.color != null) {
+      appdata.settings[90] = result.color!.toARGB32().toString();
+      appdata.settings[27] = customThemeColorIndex.toString();
+    } else {
+      return;
+    }
+    appdata.updateSettings();
+    MyApp.updater?.call();
+    setState(() {});
+  }
+
   Widget buildAppearanceSettings() => Column(
         children: [
           ListTile(
             leading: const Icon(Icons.color_lens),
             title: Text("主题选择".tl),
             trailing: Select(
+              key: ValueKey("themeColor-${appdata.settings[27]}"),
               initialValue: int.parse(appdata.settings[27]),
-              values: const [
+              values: [
                 "dynamic",
                 "red",
                 "pink",
@@ -354,14 +385,51 @@ class _SettingsPageState extends State<SettingsPage> implements PopEntry{
                 "yellow",
                 "amber",
                 "orange",
+                "自定义".tl,
               ],
               onChange: (i) {
+                if (i == customThemeColorIndex) {
+                  // 选「自定义」时直接打开取色器
+                  showCustomColorPicker();
+                  return;
+                }
                 appdata.settings[27] = i.toString();
                 appdata.updateSettings();
                 MyApp.updater?.call();
               },
               width: 140,
             ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.palette_outlined),
+            title: Text("自定义 Material 取色".tl),
+            subtitle: Text(
+              int.parse(appdata.settings[27]) == customThemeColorIndex
+                  ? "#${(int.tryParse(appdata.settings[90]) ?? 0).toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}"
+                  : "用自定义颜色生成整套 Material 3 配色".tl,
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 26,
+                  height: 26,
+                  decoration: BoxDecoration(
+                    color: Color(int.tryParse(appdata.settings[90]) ?? 0) ==
+                            const Color(0)
+                        ? Theme.of(context).colorScheme.primary
+                        : Color(int.parse(appdata.settings[90])),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                const Icon(Icons.arrow_forward_ios, size: 16),
+              ],
+            ),
+            onTap: showCustomColorPicker,
           ),
           ListTile(
             leading: const Icon(Icons.dark_mode),
@@ -723,5 +791,276 @@ class _SettingsPageState extends State<SettingsPage> implements PopEntry{
         currentPage = -1;
       });
     }
+  }
+}
+
+/// 自定义 Material 取色的颜色选择对话框：
+/// HSV 三滑杆 + 预览 + 十六进制 + 预设色块 + 从图片取色 + 重置
+class _CustomColorDialog extends StatefulWidget {
+  const _CustomColorDialog({required this.initial});
+
+  final HSVColor initial;
+
+  @override
+  State<_CustomColorDialog> createState() => _CustomColorDialogState();
+}
+
+/// 取色对话框的结果：reset=true 表示重置；否则用 color
+class _CustomColorResult {
+  const _CustomColorResult(this.color, {this.reset = false});
+
+  final Color? color;
+  final bool reset;
+}
+
+class _CustomColorDialogState extends State<_CustomColorDialog> {
+  late HSVColor _hsv = widget.initial;
+  bool _pickingImage = false;
+
+  /// 预设色块
+  static const _presets = <Color>[
+    Color(0xFFE53935),
+    Color(0xFFD81B60),
+    Color(0xFF8E24AA),
+    Color(0xFF5E35B1),
+    Color(0xFF3949AB),
+    Color(0xFF1E88E5),
+    Color(0xFF00ACC1),
+    Color(0xFF00897B),
+    Color(0xFF43A047),
+    Color(0xFF7CB342),
+    Color(0xFFFDD835),
+    Color(0xFFFB8C00),
+    Color(0xFF6D4C41),
+    Color(0xFF546E7A),
+  ];
+
+  Future<void> _pickFromImage() async {
+    if (_pickingImage) {
+      return;
+    }
+    setState(() => _pickingImage = true);
+    try {
+      final file = await openFile(
+        acceptedTypeGroups: const [
+          XTypeGroup(
+            label: 'image',
+            extensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp'],
+          ),
+        ],
+      );
+      if (file == null) {
+        return;
+      }
+      final bytes = await file.readAsBytes();
+      final color = await compute(_dominantColorOfImage, bytes);
+      if (!mounted || color == null) {
+        return;
+      }
+      setState(() => _hsv = HSVColor.fromColor(color));
+    } catch (_) {
+      if (mounted) {
+        showToast(message: "取色失败，换张图片试试".tl);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _pickingImage = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _hsv.toColor();
+    final hex = color
+        .toARGB32()
+        .toRadixString(16)
+        .padLeft(8, "0")
+        .substring(2)
+        .toUpperCase();
+    return AlertDialog(
+      title: Text("自定义 Material 取色".tl),
+      content: SizedBox(
+        width: 360,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                height: 64,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Center(
+                child: Text(
+                  "#$hex",
+                  style: const TextStyle(
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              _slider(
+                label: "色相".tl,
+                value: _hsv.hue,
+                max: 360,
+                onChanged: (v) => setState(() => _hsv = _hsv.withHue(v)),
+              ),
+              _slider(
+                label: "饱和度".tl,
+                value: _hsv.saturation,
+                max: 1,
+                onChanged: (v) =>
+                    setState(() => _hsv = _hsv.withSaturation(v)),
+              ),
+              _slider(
+                label: "亮度".tl,
+                value: _hsv.value,
+                max: 1,
+                onChanged: (v) => setState(() => _hsv = _hsv.withValue(v)),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                "预设色块".tl,
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  for (final c in _presets)
+                    InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: () => setState(() => _hsv = HSVColor.fromColor(c)),
+                      child: Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: c,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: _hsv.toColor().toARGB32() == c.toARGB32()
+                                ? Theme.of(context).colorScheme.onSurface
+                                : Theme.of(context)
+                                    .colorScheme
+                                    .outlineVariant,
+                            width: _hsv.toColor().toARGB32() == c.toARGB32()
+                                ? 2
+                                : 1,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _pickingImage ? null : _pickFromImage,
+                    icon: _pickingImage
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.image_outlined, size: 18),
+                    label: Text("从图片取色".tl),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => Navigator.pop(
+                      context,
+                      const _CustomColorResult(null, reset: true),
+                    ),
+                    icon: const Icon(Icons.restart_alt, size: 18),
+                    label: Text("重置".tl),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text("取消".tl),
+        ),
+        FilledButton(
+          onPressed: () =>
+              Navigator.pop(context, _CustomColorResult(color)),
+          child: Text("确定".tl),
+        ),
+      ],
+    );
+  }
+
+  Widget _slider({
+    required String label,
+    required double value,
+    required double max,
+    required void Function(double) onChanged,
+  }) {
+    return Row(
+      children: [
+        SizedBox(width: 56, child: Text(label)),
+        Expanded(
+          child: Slider(
+            value: value,
+            max: max,
+            onChanged: onChanged,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 取图片的主色（在后台 isolate 里跑）：
+/// 缩到 48x48，跳过灰/黑/白，用「饱和度加权 + 色相向量平均」得到主色相，
+/// 再固定成一套适合做 Material 种子的颜色。
+Color? _dominantColorOfImage(Uint8List bytes) {
+  try {
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) {
+      return null;
+    }
+    final small = img.copyResize(decoded, width: 48, height: 48);
+    double sumX = 0;
+    double sumY = 0;
+    double weight = 0;
+    for (final p in small) {
+      final r = p.r.toDouble() / 255.0;
+      final g = p.g.toDouble() / 255.0;
+      final b = p.b.toDouble() / 255.0;
+      final hsv = HSVColor.fromColor(Color.fromARGB(255, (r * 255).round(),
+          (g * 255).round(), (b * 255).round()));
+      // 跳过接近灰/黑/白的像素
+      if (hsv.saturation < 0.18 || hsv.value < 0.15 || hsv.value > 0.98) {
+        continue;
+      }
+      final rad = hsv.hue * math.pi / 180.0;
+      final w = hsv.saturation;
+      sumX += math.cos(rad) * w;
+      sumY += math.sin(rad) * w;
+      weight += w;
+    }
+    if (weight <= 0) {
+      return null;
+    }
+    var hue = math.atan2(sumY, sumX) * 180.0 / math.pi;
+    if (hue < 0) {
+      hue += 360;
+    }
+    return HSVColor.fromAHSV(1, hue, 0.55, 0.78).toColor();
+  } catch (_) {
+    return null;
   }
 }

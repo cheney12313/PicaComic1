@@ -159,11 +159,7 @@ class TapController {
       }
       logic.tools = !logic.tools;
       logic.update();
-      if (logic.tools) {
-        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-      } else {
-        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
-      }
+      // 系统栏始终隐藏，状态栏由 ReaderStatusBar 跟着工具栏自绘
       return;
     }
 
@@ -324,14 +320,11 @@ class TapController {
     if (flag && flag2) {
       logic.tools = !logic.tools;
       logic.update(["ToolBar"]);
+      // 阅读器里系统栏始终隐藏，顶部自绘状态栏跟着工具栏一起滑入/滑出
       if (logic.tools) {
-        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
         StateController.findOrNull<WindowFrameController>()?.resetTheme();
-      } else {
-        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
-        if(appdata.settings[81] == "1") {
-          StateController.findOrNull<WindowFrameController>()?.setDarkTheme();
-        }
+      } else if (appdata.settings[81] == "1") {
+        StateController.findOrNull<WindowFrameController>()?.setDarkTheme();
       }
     }
   }
