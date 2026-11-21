@@ -1,0 +1,97 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master, main]
+    paths:
+      - 'lib/**'
+      - 'android/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - '.github/workflows/build-apk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Show versions
+        run: |
+          flutter --version
+          java -version
+
+      - name: Accept Android licenses
+        run: yes | flutter doctor --android-licenses || true
+
+      - name: Install pinned NDK
+        run: |
+          SDKMANAGER="${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --install "ndk;28.0.13004108" || true
+          else
+            echo "sdkmanager not found; AGP will download the NDK on demand"
+          fi
+
+      # android/app/build.gradle 无条件读取 android/key.properties，
+      # 缺失时 Gradle 在配置阶段就会失败，所以这里先生成一套临时签名。
+      - name: Generate signing key
+        run: |
+          set -e
+          PASS=$(openssl rand -hex 16)
+          keytool -genkeypair -v \
+            -keystore android/app/pica-comic.jks \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -alias picacomic -storepass "$PASS" -keypass "$PASS" \
+            -dname "CN=PicaComic,OU=Dev,O=PicaComic,L=NA,ST=NA,C=CN"
+          printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=picacomic\nstoreFile=pica-comic.jks\n' \
+            "$PASS" "$PASS" > android/key.properties
+          echo "key.properties created"
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      # build.gradle 里配置了 ABI 分包（arm64-v8a / x86_64 + universal），
+      # flutter 工具有时会因为找不到 app-release.apk 而返回非 0，这里以实际产物为准。
+      - name: Build APKs
+        run: |
+          set +e
+          flutter build apk --release
+          code=$?
+          echo "flutter exit code: $code"
+          find build/app/outputs -name '*.apk' -print 2>/dev/null
+          if [ $code -ne 0 ] && [ -z "$(find build/app/outputs -name '*.apk' -print -quit 2>/dev/null)" ]; then
+            exit $code
+          fi
+
+      - name: Checksums
+        run: |
+          for f in $(find build/app/outputs -name '*.apk'); do sha256sum "$f"; done
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: pica-comic-apk
+          path: |
+            build/app/outputs/flutter-apk/*.apk
+            build/app/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
