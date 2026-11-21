@@ -1,0 +1,86 @@
+﻿name: Build Android APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Show versions
+        run: |
+          flutter --version
+          java -version
+
+      - name: Accept Android licenses
+        run: yes | flutter doctor --android-licenses || true
+
+      - name: Install pinned NDK
+        run: |
+          SDKMANAGER="${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --install "ndk;28.0.13004108" || true
+          else
+            echo "sdkmanager not found; AGP will download the NDK on demand"
+          fi
+
+      # android/app/build.gradle 鏃犳潯浠惰鍙?android/key.properties锛?      # 缂哄け鏃?Gradle 鍦ㄩ厤缃樁娈靛氨浼氬け璐ワ紝鎵€浠ヨ繖閲屽厛鐢熸垚涓€濂椾复鏃剁鍚嶃€?      - name: Generate signing key
+        run: |
+          set -e
+          PASS=$(openssl rand -hex 16)
+          keytool -genkeypair -v \
+            -keystore android/app/pica-comic.jks \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -alias picacomic -storepass "$PASS" -keypass "$PASS" \
+            -dname "CN=PicaComic,OU=Dev,O=PicaComic,L=NA,ST=NA,C=CN"
+          printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=picacomic\nstoreFile=pica-comic.jks\n' \
+            "$PASS" "$PASS" > android/key.properties
+          echo "key.properties created"
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      # build.gradle 閲岄厤缃簡 ABI 鍒嗗寘锛坅rm64-v8a / x86_64 + universal锛夛紝
+      # flutter 宸ュ叿鏈夋椂浼氬洜涓烘壘涓嶅埌 app-release.apk 鑰岃繑鍥為潪 0锛岃繖閲屼互瀹為檯浜х墿涓哄噯銆?      - name: Build APKs
+        run: |
+          set +e
+          flutter build apk --release
+          code=$?
+          echo "flutter exit code: $code"
+          find build/app/outputs -name '*.apk' -print 2>/dev/null
+          if [ $code -ne 0 ] && [ -z "$(find build/app/outputs -name '*.apk' -print -quit 2>/dev/null)" ]; then
+            exit $code
+          fi
+
+      - name: Checksums
+        run: |
+          for f in $(find build/app/outputs -name '*.apk'); do sha256sum "$f"; done
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: pica-comic-apk
+          path: |
+            build/app/outputs/flutter-apk/*.apk
+            build/app/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
