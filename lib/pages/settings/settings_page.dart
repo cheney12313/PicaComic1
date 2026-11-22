@@ -827,6 +827,46 @@ class _CustomColorDialogState extends State<_CustomColorDialog> {
   late HSVColor _hsv = widget.initial;
   bool _pickingImage = false;
 
+  /// 十六进制颜色输入框（不含 #）
+  late final TextEditingController _hexController =
+      TextEditingController(text: _hexString(widget.initial.toColor()));
+
+  static String _hexString(Color c) => c
+      .toARGB32()
+      .toRadixString(16)
+      .padLeft(8, "0")
+      .substring(2)
+      .toUpperCase();
+
+  /// 更新颜色并同步十六进制输入框
+  void _updateHsv(HSVColor v) {
+    _hexController.text = _hexString(v.toColor());
+    setState(() => _hsv = v);
+  }
+
+  /// 输入框改动时解析颜色（支持 RGB / RRGGBB / AARRGGBB，3 位缩写也行）
+  void _onHexChanged(String text) {
+    var t = text.trim().replaceAll("#", "");
+    if (t.length == 3) {
+      t = t.split("").map((e) => "$e$e").join();
+    }
+    if (t.length != 6 && t.length != 8) {
+      return;
+    }
+    final value = int.tryParse(t, radix: 16);
+    if (value == null) {
+      return;
+    }
+    final color = Color(t.length == 6 ? (0xFF000000 | value) : value);
+    setState(() => _hsv = HSVColor.fromColor(color));
+  }
+
+  @override
+  void dispose() {
+    _hexController.dispose();
+    super.dispose();
+  }
+
   /// 预设色块
   static const _presets = <Color>[
     Color(0xFFE53935),
@@ -867,7 +907,7 @@ class _CustomColorDialogState extends State<_CustomColorDialog> {
       if (!mounted || color == null) {
         return;
       }
-      setState(() => _hsv = HSVColor.fromColor(color));
+      _updateHsv(HSVColor.fromColor(color));
     } catch (_) {
       if (mounted) {
         showToast(message: "取色失败，换张图片试试".tl);
@@ -906,10 +946,29 @@ class _CustomColorDialogState extends State<_CustomColorDialog> {
               ),
               const SizedBox(height: 8),
               Center(
-                child: Text(
-                  "#$hex",
-                  style: const TextStyle(
-                    fontFeatures: [FontFeature.tabularFigures()],
+                child: SizedBox(
+                  width: 190,
+                  child: TextField(
+                    controller: _hexController,
+                    textAlign: TextAlign.center,
+                    textCapitalization: TextCapitalization.characters,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(
+                          RegExp(r"[0-9a-fA-F#]")),
+                      LengthLimitingTextInputFormatter(7),
+                    ],
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      prefixText: "#",
+                      hintText: "RRGGBB",
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(
+                      fontFeatures: [FontFeature.tabularFigures()],
+                      letterSpacing: 1.2,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    onChanged: _onHexChanged,
                   ),
                 ),
               ),
@@ -918,20 +977,19 @@ class _CustomColorDialogState extends State<_CustomColorDialog> {
                 label: "色相".tl,
                 value: _hsv.hue,
                 max: 360,
-                onChanged: (v) => setState(() => _hsv = _hsv.withHue(v)),
+                onChanged: (v) => _updateHsv(_hsv.withHue(v)),
               ),
               _slider(
                 label: "饱和度".tl,
                 value: _hsv.saturation,
                 max: 1,
-                onChanged: (v) =>
-                    setState(() => _hsv = _hsv.withSaturation(v)),
+                onChanged: (v) => _updateHsv(_hsv.withSaturation(v)),
               ),
               _slider(
                 label: "亮度".tl,
                 value: _hsv.value,
                 max: 1,
-                onChanged: (v) => setState(() => _hsv = _hsv.withValue(v)),
+                onChanged: (v) => _updateHsv(_hsv.withValue(v)),
               ),
               const SizedBox(height: 8),
               Text(
@@ -946,7 +1004,7 @@ class _CustomColorDialogState extends State<_CustomColorDialog> {
                   for (final c in _presets)
                     InkWell(
                       borderRadius: BorderRadius.circular(20),
-                      onTap: () => setState(() => _hsv = HSVColor.fromColor(c)),
+                      onTap: () => _updateHsv(HSVColor.fromColor(c)),
                       child: Container(
                         width: 28,
                         height: 28,
