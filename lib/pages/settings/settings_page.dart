@@ -75,6 +75,7 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> implements PopEntry{
   int currentPage = -1;
 
+
   ColorScheme get colors => Theme.of(context).colorScheme;
 
   bool get enableTwoViews => !UiMode.m1(context);
@@ -335,8 +336,9 @@ class _SettingsPageState extends State<SettingsPage> implements PopEntry{
     return const Placeholder();
   }
 
-  /// 打开自定义 Material 取色器；选完颜色后立即应用到全局主题
-  Future<void> showCustomColorPicker() async {
+  /// 打开自定义 Material 取色器；选完颜色后立即应用到全局主题。
+  /// 返回 true 表示改动了主题（选定或重置），false 表示取消。
+  Future<bool> showCustomColorPicker() async {
     final stored = int.tryParse(appdata.settings[90]) ?? 0;
     final initial = stored != 0
         ? HSVColor.fromColor(Color(stored))
@@ -346,7 +348,7 @@ class _SettingsPageState extends State<SettingsPage> implements PopEntry{
       builder: (context) => _CustomColorDialog(initial: initial),
     );
     if (result == null) {
-      return;
+      return false;
     }
     if (result.reset) {
       // 重置：清掉自定义色，恢复跟随系统的动态取色
@@ -356,11 +358,12 @@ class _SettingsPageState extends State<SettingsPage> implements PopEntry{
       appdata.settings[90] = result.color!.toARGB32().toString();
       appdata.settings[27] = customThemeColorIndex.toString();
     } else {
-      return;
+      return false;
     }
     appdata.updateSettings();
     MyApp.updater?.call();
     setState(() {});
+    return true;
   }
 
   Widget buildAppearanceSettings() => Column(
@@ -388,26 +391,33 @@ class _SettingsPageState extends State<SettingsPage> implements PopEntry{
                 "自定义".tl,
               ],
               onChange: (i) {
-                if (i == customThemeColorIndex) {
-                  // 选「自定义」时直接打开取色器
-                  showCustomColorPicker();
-                  return;
-                }
                 appdata.settings[27] = i.toString();
                 appdata.updateSettings();
                 MyApp.updater?.call();
               },
+              // 「自定义」只用来显示当前状态，进菜单不给选（入口在下面的独立行）
+              disabledValues: const [customThemeColorIndex],
               width: 140,
             ),
           ),
           ListTile(
             leading: const Icon(Icons.palette_outlined),
             title: Text("自定义 Material 取色".tl),
-            subtitle: Text(
-              int.parse(appdata.settings[27]) == customThemeColorIndex
-                  ? "#${(int.tryParse(appdata.settings[90]) ?? 0).toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}"
-                  : "用自定义颜色生成整套 Material 3 配色".tl,
-            ),
+            subtitle: Text(() {
+              final stored = int.tryParse(appdata.settings[90]) ?? 0;
+              final hex = stored
+                  .toRadixString(16)
+                  .padLeft(8, '0')
+                  .substring(2)
+                  .toUpperCase();
+              if (int.parse(appdata.settings[27]) == customThemeColorIndex) {
+                return "#$hex";
+              }
+              if (stored != 0) {
+                return "${"已保存 #$hex，当前未启用".tl}";
+              }
+              return "用自定义颜色生成整套 Material 3 配色".tl;
+            }()),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
