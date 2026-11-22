@@ -351,6 +351,7 @@ extension ToolBar on ComicReadingPage {
           switchInCurve: Curves.fastOutSlowIn,
           child: comicReadingPageLogic.tools
               ? Material(
+                  color: Theme.of(context).colorScheme.surface,
                   surfaceTintColor: Theme.of(context).colorScheme.surfaceTint,
                   elevation: 3,
                   shadowColor:

@@ -6,6 +6,7 @@ const double _pi = 3.141592653589793;
 ///
 /// 阅读器里系统状态栏是隐藏的（immersiveSticky），这条状态栏画在顶部工具栏内部，
 /// 所以它会跟着工具栏一起滑入滑出，也能自己做淡入淡出。
+/// 颜色跟随当前主题深浅色（深色主题 = 浅色图标，浅色主题 = 深色图标）。
 class ReaderStatusBar extends StatefulWidget {
   const ReaderStatusBar({super.key});
 
@@ -92,6 +93,9 @@ class _ReaderStatusBarState extends State<ReaderStatusBar> {
         ReaderStatusBar._height = top;
       }
     }
+    // 跟随主题深浅色：深色主题用浅色图标，浅色主题用深色图标
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final iconColor = dark ? const Color(0xFFE8E8E8) : const Color(0xFF1B1B1B);
     // 兜底 28dp，避免取不到高度时内容压到刘海
     final height = ReaderStatusBar._height > 0 ? ReaderStatusBar._height : 28.0;
     return SizedBox(
@@ -103,22 +107,23 @@ class _ReaderStatusBarState extends State<ReaderStatusBar> {
           children: [
             Text(
               _time,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'MiSansStatus',
                 fontSize: 15,
                 fontWeight: FontWeight.w500,
                 letterSpacing: 0.2,
-                color: Colors.white,
+                color: iconColor,
               ),
             ),
             const Spacer(),
-            if (_cellular) _HyperSignalGroup(label: _wifi ? '' : _label),
+            if (_cellular)
+              _HyperSignalGroup(label: _wifi ? '' : _label, dark: dark),
             if (_cellular && _wifi) const SizedBox(width: 6),
-            if (_wifi) const _HyperWifiIcon(),
+            if (_wifi) _HyperWifiIcon(dark: dark),
             if (_cellular || _wifi) const SizedBox(width: 6),
-            _HyperBatteryIcon(level: _level, charging: _charging),
+            _HyperBatteryIcon(level: _level, charging: _charging, dark: dark),
             if (_charging) const SizedBox(width: 2.5),
-            if (_charging) const _HyperBoltIcon(),
+            if (_charging) _HyperBoltIcon(dark: dark),
           ],
         ),
       ),
@@ -128,17 +133,19 @@ class _ReaderStatusBarState extends State<ReaderStatusBar> {
 
 /// 信号组：左上角网络制式文字（5G/4G，连 WiFi 时不显示）+ 右下角 4 根竖条。
 class _HyperSignalGroup extends StatelessWidget {
-  const _HyperSignalGroup({required this.label});
+  const _HyperSignalGroup({required this.label, required this.dark});
 
   final String label;
+  final bool dark;
 
   @override
   Widget build(BuildContext context) {
+    final color = dark ? const Color(0xFFE8E8E8) : const Color(0xFF1B1B1B);
     if (label.isEmpty) {
-      return const SizedBox(
+      return SizedBox(
         width: 16.5,
         height: 12,
-        child: CustomPaint(painter: _HyperSignalBarsPainter()),
+        child: CustomPaint(painter: _HyperSignalBarsPainter(dark)),
       );
     }
     return SizedBox(
@@ -152,23 +159,23 @@ class _HyperSignalGroup extends StatelessWidget {
             top: -1.85, // 文字底边在柱子底部上方 25px（系统实测）
             child: Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'MiSansStatus',
                 fontSize: 7.3,
                 fontWeight: FontWeight.w700,
                 height: 1.0,
                 letterSpacing: -0.3,
-                color: Color(0xFFE8E8E8),
+                color: color,
               ),
             ),
           ),
-          const Positioned(
+          Positioned(
             right: 0,
             bottom: 0,
             child: SizedBox(
               width: 16.5,
               height: 12,
-              child: CustomPaint(painter: _HyperSignalBarsPainter()),
+              child: CustomPaint(painter: _HyperSignalBarsPainter(dark)),
             ),
           ),
         ],
@@ -177,13 +184,16 @@ class _HyperSignalGroup extends StatelessWidget {
   }
 }
 
-/// 4 根圆角竖条：宽 2.5dp、间距 1.85dp、高度 6.2/9.2/12.0/14.8dp，底部对齐。
+/// 4 根圆角竖条：宽 2.5dp、间距 1.85dp、高度 4.0/6.2/9.2/12.0dp，底部对齐。
 class _HyperSignalBarsPainter extends CustomPainter {
-  const _HyperSignalBarsPainter();
+  const _HyperSignalBarsPainter(this.dark);
+
+  final bool dark;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = const Color(0xFFE8E8E8);
+    final paint = Paint()
+      ..color = dark ? const Color(0xFFE8E8E8) : const Color(0xFF1B1B1B);
     const barW = 2.5;
     const gap = 1.85;
     const heights = <double>[4.0, 6.2, 9.2, 12.0];
@@ -202,25 +212,30 @@ class _HyperSignalBarsPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _HyperSignalBarsPainter oldDelegate) =>
+      oldDelegate.dark != dark;
 }
 
 /// WiFi：两段实心扇环 + 下方实心小三角（澎湃OS 的 fan 造型）。
 class _HyperWifiIcon extends StatelessWidget {
-  const _HyperWifiIcon();
+  const _HyperWifiIcon({required this.dark});
+
+  final bool dark;
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox(
+    return SizedBox(
       width: 16.5,
       height: 12,
-      child: CustomPaint(painter: _HyperWifiPainter()),
+      child: CustomPaint(painter: _HyperWifiPainter(dark)),
     );
   }
 }
 
 class _HyperWifiPainter extends CustomPainter {
-  const _HyperWifiPainter();
+  const _HyperWifiPainter(this.dark);
+
+  final bool dark;
 
   // 参数由「系统图标像素 + 扇形模型」拟合得到（IoU 0.95），单位 dp（图标高 12dp）
   static const _cx = 8.32;
@@ -228,7 +243,7 @@ class _HyperWifiPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    const color = Color(0xFFE8E8E8);
+    final color = dark ? const Color(0xFFE8E8E8) : const Color(0xFF1B1B1B);
     const center = Offset(_cx, _cy);
     final stroke = Paint()
       ..color = color
@@ -281,15 +296,21 @@ class _HyperWifiPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _HyperWifiPainter oldDelegate) =>
+      oldDelegate.dark != dark;
 }
 
 /// 电池：实心横向圆角电池（21.8x12dp）+ 右侧触点 + 内部反色电量数字。
 class _HyperBatteryIcon extends StatelessWidget {
-  const _HyperBatteryIcon({required this.level, required this.charging});
+  const _HyperBatteryIcon({
+    required this.level,
+    required this.charging,
+    required this.dark,
+  });
 
   final int? level;
   final bool charging;
+  final bool dark;
 
   @override
   Widget build(BuildContext context) {
@@ -297,20 +318,20 @@ class _HyperBatteryIcon extends StatelessWidget {
       width: 26.8,
       height: 14,
       child: CustomPaint(
-        painter: _HyperBatteryPainter(level, charging),
+        painter: _HyperBatteryPainter(level, charging, dark),
       ),
     );
   }
 }
 
 class _HyperBatteryPainter extends CustomPainter {
-  const _HyperBatteryPainter(this.level, this.charging);
+  const _HyperBatteryPainter(this.level, this.charging, this.dark);
 
   final int? level;
   final bool charging;
+  final bool dark;
 
   static const _green = Color(0xFF1DCD3A);
-  static const _nub = Color(0xFF6A6C6E);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -318,7 +339,13 @@ class _HyperBatteryPainter extends CustomPainter {
     final bodyW = text.length >= 3 ? 22.8 : 21.8;
     const bodyH = 12.0;
     final bodyTop = (size.height - bodyH) / 2;
-    final bodyColor = charging ? _green : Colors.white;
+
+    // 不充电时：深色主题用浅色实心电池，浅色主题用深色实心电池（和系统一致）
+    final iconColor =
+        dark ? const Color(0xFFE8E8E8) : const Color(0xFF1B1B1B);
+    final bodyColor = charging ? _green : iconColor;
+    final nubColor =
+        charging ? const Color(0xFF6A6C6E) : iconColor.withValues(alpha: 0.55);
 
     // 实心电池
     canvas.drawRRect(
@@ -328,17 +355,19 @@ class _HyperBatteryPainter extends CustomPainter {
       ),
       Paint()..color = bodyColor,
     );
-    // 右侧触点（系统里是灰色）
+    // 右侧触点
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(bodyW + 0.8, bodyTop + bodyH / 2 - 2.0, 1.2, 4.0),
         const Radius.circular(0.6),
       ),
-      Paint()..color = charging ? _nub : _nub,
+      Paint()..color = nubColor,
     );
 
     // 电量数字：与电池底色反色
-    final numberColor = charging ? Colors.white : const Color(0xFF1B1B1B);
+    final numberColor = charging
+        ? Colors.white
+        : (dark ? const Color(0xFF1B1B1B) : const Color(0xFFF5F5F5));
     final textPainter = TextPainter(
       text: TextSpan(
         text: text,
@@ -367,25 +396,31 @@ class _HyperBatteryPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _HyperBatteryPainter oldDelegate) =>
-      oldDelegate.level != level || oldDelegate.charging != charging;
+      oldDelegate.level != level ||
+      oldDelegate.charging != charging ||
+      oldDelegate.dark != dark;
 }
 
-/// 充电闪电（电池右侧，浅灰白色，尺寸按系统实测 5.2x11.5dp）。
+/// 充电闪电（电池右侧）。
 class _HyperBoltIcon extends StatelessWidget {
-  const _HyperBoltIcon();
+  const _HyperBoltIcon({required this.dark});
+
+  final bool dark;
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox(
+    return SizedBox(
       width: 5.4,
       height: 11.5,
-      child: CustomPaint(painter: _HyperBoltPainter()),
+      child: CustomPaint(painter: _HyperBoltPainter(dark)),
     );
   }
 }
 
 class _HyperBoltPainter extends CustomPainter {
-  const _HyperBoltPainter();
+  const _HyperBoltPainter(this.dark);
+
+  final bool dark;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -399,9 +434,15 @@ class _HyperBoltPainter extends CustomPainter {
       ..lineTo(w, h * 0.40)
       ..lineTo(w * 0.58, h * 0.40)
       ..close();
-    canvas.drawPath(path, Paint()..color = const Color(0xFFD2D2D3));
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color =
+            dark ? const Color(0xFFD2D2D3) : const Color(0xFF5F6368),
+    );
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _HyperBoltPainter oldDelegate) =>
+      oldDelegate.dark != dark;
 }
