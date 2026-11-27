@@ -30,6 +30,7 @@ class Avatar extends StatelessWidget {
         if (couldBeShown) {
           showUserInfo(context, avatarUrl, frame, name, slogan, level);
         } else if(avatarUrl != null && avatarUrl != "DEFAULT AVATAR URL"){
+          prepareImageViewerStatusBar();
           App.globalTo(() => ShowImagePageWithHero(avatarUrl!, "avatar"));
         }
       },

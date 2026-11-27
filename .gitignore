@@ -51,3 +51,5 @@ app.*.map.json
 /android/app/*.jks
 /android/app/*.keystore
 /dist/
+# 项目根目录下手工归档的 APK
+/*.apk

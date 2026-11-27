@@ -159,7 +159,12 @@ class TapController {
       }
       logic.tools = !logic.tools;
       logic.update();
-      // 系统栏始终隐藏，状态栏由 ReaderStatusBar 跟着工具栏自绘
+      // 工具栏显隐联动系统状态栏
+      if (logic.tools) {
+        showReaderSystemBars();
+      } else {
+        hideReaderSystemBars();
+      }
       return;
     }
 
@@ -320,11 +325,15 @@ class TapController {
     if (flag && flag2) {
       logic.tools = !logic.tools;
       logic.update(["ToolBar"]);
-      // 阅读器里系统栏始终隐藏，顶部自绘状态栏跟着工具栏一起滑入/滑出
+      // 工具栏和系统状态栏一起出现、一起收起；退出阅读器时由 dispose 恢复系统栏
       if (logic.tools) {
+        showReaderSystemBars();
         StateController.findOrNull<WindowFrameController>()?.resetTheme();
-      } else if (appdata.settings[81] == "1") {
-        StateController.findOrNull<WindowFrameController>()?.setDarkTheme();
+      } else {
+        hideReaderSystemBars();
+        if (appdata.settings[81] == "1") {
+          StateController.findOrNull<WindowFrameController>()?.setDarkTheme();
+        }
       }
     }
   }

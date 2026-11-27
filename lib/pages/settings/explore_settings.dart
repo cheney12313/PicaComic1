@@ -22,11 +22,6 @@ Widget buildExploreSettings(BuildContext context, bool popUp) {
         icon: const Icon(Icons.local_activity_outlined),
       ),
       NewPageSetting(
-          title: "探索页面".tl,
-          onTap: () => setExplorePages(context),
-          icon:  const Icon(Icons.explore_outlined)
-      ),
-      NewPageSetting(
           title: "分类页面".tl,
           onTap: () => showPopUpWidget(App.globalContext!,
               MultiPagesFilter("分类页面".tl, 67, categoryPages())),

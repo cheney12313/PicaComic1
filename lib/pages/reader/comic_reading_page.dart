@@ -21,6 +21,10 @@ import 'package:pica_comic/foundation/image_loader/base_image_provider.dart';
 import 'package:pica_comic/foundation/image_loader/file_image_loader.dart';
 import 'package:pica_comic/foundation/image_loader/stream_image_provider.dart';
 import 'package:pica_comic/foundation/local_favorites.dart';
+import 'package:pica_comic/foundation/page_translation/batch_translation.dart';
+import 'package:pica_comic/foundation/page_translation/page_translation_service.dart';
+import 'package:pica_comic/foundation/page_translation/translation_settings.dart';
+import 'package:pica_comic/pages/settings/translation_settings_page.dart';
 import 'package:pica_comic/network/download.dart';
 import 'package:pica_comic/network/eh_network/eh_models.dart';
 import 'package:pica_comic/network/eh_network/get_gallery_id.dart';
@@ -34,6 +38,7 @@ import 'package:pica_comic/tools/keep_screen_on.dart';
 import 'package:pica_comic/foundation/image_manager.dart';
 import 'package:pica_comic/foundation/history.dart';
 import 'package:pica_comic/tools/save_image.dart';
+import 'package:pica_comic/tools/system_ui.dart';
 import 'package:pica_comic/tools/time.dart';
 import 'package:pica_comic/network/jm_network/jm_network.dart';
 import '../../foundation/app.dart';
@@ -55,31 +60,39 @@ part 'tool_bar.dart';
 part 'reading_type.dart';
 part 'reading_settings.dart';
 
-part 'reader_status_bar.dart';
 part 'reading_data.dart';
 
-/// 阅读器是否使用深色背景。
+/// 阅读器工具栏 / 状态栏的底色。
 ///
-/// 注意不能只看 App 主题：阅读器可以单独开"深色背景"，
-/// 也可能主题是浅色但整页是深色图片。
-bool readerIsDark([BuildContext? context]) {
-  if (appdata.appSettings.useDarkBackground) {
-    return true;
-  }
+/// 就是当前主题的 surface：工具栏保持和 App 其它页面一致的样子，
+/// 不因为"使用深色背景"而单独变黑——深色背景只管正文区域。
+Color readerChromeColor([BuildContext? context]) {
   final ctx = context ?? App.globalContext;
   if (ctx != null) {
-    return Theme.of(ctx).brightness == Brightness.dark;
+    return Theme.of(ctx).colorScheme.surface;
   }
-  return WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+  final dark = WidgetsBinding.instance.platformDispatcher.platformBrightness ==
       Brightness.dark;
+  return dark ? const Color(0xFF1C1C1E) : const Color(0xFFF7F9FF);
 }
 
-/// 按阅读器背景深浅生成系统栏样式（状态栏图标反色）。
-SystemUiOverlayStyle readerOverlayStyle(bool dark) {
+/// 底色深不深（决定状态栏图标反成白色还是黑色）。
+///
+/// 不看"使用深色背景"：那个只影响正文，状态栏压在工具栏上，
+/// 图标颜色必须跟工具栏底色走，否则浅色工具栏上会出现看不见的白图标。
+bool chromeIsDark([BuildContext? context]) =>
+    readerChromeColor(context).computeLuminance() < 0.5;
+
+/// 按工具栏底色深浅生成系统栏样式（状态栏图标反色）。
+///
+/// [chrome] 是状态栏底色：大部分 ROM 在 edge-to-edge 下会忽略它，
+/// 但只要有一层系统状态栏被画出来，它就得和工具栏同色，不能留成透明。
+SystemUiOverlayStyle readerOverlayStyle(bool dark, [Color? chrome]) {
+  final color = chrome ?? Colors.transparent;
   return (dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
       .copyWith(
-    statusBarColor: Colors.transparent,
-    systemNavigationBarColor: Colors.transparent,
+    statusBarColor: color,
+    systemNavigationBarColor: color,
     statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
     statusBarBrightness: dark ? Brightness.dark : Brightness.light,
     systemNavigationBarIconBrightness:
@@ -90,31 +103,42 @@ SystemUiOverlayStyle readerOverlayStyle(bool dark) {
 SystemUiOverlayStyle? _lastReaderOverlayStyle;
 
 /// 应用阅读器系统栏样式（去重，避免每次 build 都调平台通道）。
-void applyReaderOverlayStyle([BuildContext? context]) {
-  final style = readerOverlayStyle(readerIsDark(context));
-  if (_lastReaderOverlayStyle == style) {
+///
+/// [force] 用在刚切换过 SystemUiMode 的时候：`setEnabledSystemUIMode`
+/// 会清掉状态栏的深浅色外观标记（图标被重置成白色），这时哪怕样式没变
+/// 也必须重新下发一次，否则浅色主题下会一直是白色图标——深色模式下看不出来，
+/// 一切到浅色就变成"状态栏不跟着主题走"。
+void applyReaderOverlayStyle([BuildContext? context, bool force = false]) {
+  final style = readerOverlayStyle(
+    chromeIsDark(context),
+    readerChromeColor(context),
+  );
+  if (!force && _lastReaderOverlayStyle == style) {
     return;
   }
   _lastReaderOverlayStyle = style;
   SystemChrome.setSystemUIOverlayStyle(style);
 }
 
-/// 显示系统栏（沉浸阅读中点一下屏幕时调用）。
+/// 显示系统状态栏（工具栏出现时调用）。
 ///
-/// 用 manual + 全部 overlay 显式显示：部分 ROM（MIUI/HyperOS）从 immersive
-/// 切回 edgeToEdge 时不会自动恢复状态栏，manual 是明确的显式请求。
-void showReaderSystemBars() {
-  SystemChrome.setEnabledSystemUIMode(
+/// 用 manual + 只开 top：部分 ROM（MIUI/HyperOS）从 immersive 切回 edgeToEdge
+/// 时不会自动恢复状态栏，manual 是明确的显式请求；底部导航栏保持隐藏，
+/// 免得工具栏弹出时阅读区高度被二次挤压。
+///
+/// 切换模式会把状态栏图标外观重置成默认值，所以切换完要强制重发一次样式，
+/// 让图标颜色和工具栏底色一起变。
+Future<void> showReaderSystemBars() async {
+  await SystemChrome.setEnabledSystemUIMode(
     SystemUiMode.manual,
-    overlays: SystemUiOverlay.values,
+    overlays: const [SystemUiOverlay.top],
   );
-  applyReaderOverlayStyle();
+  applyReaderOverlayStyle(null, true);
 }
 
 /// 隐藏系统栏（回到沉浸阅读）。
 void hideReaderSystemBars() {
-  // 阅读器内系统栏始终隐藏，改由 ReaderStatusBar 自绘（可自由做动画）
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 }
 
 
@@ -258,13 +282,10 @@ class ComicReadingPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 此时系统状态栏还是可见的，先记下它的高度，供自绘状态栏对齐刘海/挖孔
-    ReaderStatusBar.rememberHeight(MediaQuery.of(context).padding.top);
-    // 让状态栏/导航栏图标跟随阅读器背景反色（沉浸模式切回系统栏时也正确）
+    // 状态栏/导航栏图标跟随阅读器背景反色（沉浸模式下同样生效）
     applyReaderOverlayStyle(context);
     return StateBuilder<ComicReadingPageLogic>(initState: (logic) {
-      // 沉浸阅读：进入时隐藏系统栏，点屏幕再显示（showReaderSystemBars）
-      // 阅读器内系统栏始终隐藏，改由 ReaderStatusBar 自绘（可自由做动画）
+      // 进入阅读器先沉浸：系统状态栏隐藏，点屏幕弹出工具栏时再一起显示
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
       applyReaderOverlayStyle(context);
       if (appdata.settings[14] == "1") {
@@ -285,6 +306,7 @@ class ComicReadingPage extends StatelessWidget {
       BaseImageProvider.clearCache();
       BaseImageProvider.setCacheSizeLimit(100 * 1024 * 1024);
       logic.openEpsView = openEpsDrawer;
+      logic.restartTranslation = () => translateChapter(logic);
       if (useDarkBackground) {
         Future.microtask(() =>
             StateController.findOrNull<WindowFrameController>()
@@ -297,11 +319,10 @@ class ComicReadingPage extends StatelessWidget {
       BaseImageProvider.clearCache();
       BaseImageProvider.setCacheSizeLimit(50 * 1024 * 1024);
       logic.clearPhotoViewControllers();
-      // 退出阅读器：用 manual 显式恢复系统栏（部分 ROM 从 immersive 切 edgeToEdge 不会恢复）
-      SystemChrome.setEnabledSystemUIMode(
-        SystemUiMode.manual,
-        overlays: SystemUiOverlay.values,
-      );
+      logic.translationBatch?.cancel();
+      // 退出阅读器：恢复正常系统栏并重新下发 App 的主题样式
+      // （切 UI mode 会重置状态栏图标外观，否则主界面会留下白色图标）
+      restoreSystemBars();
       SystemChrome.setPreferredOrientations(DeviceOrientation.values);
       if (logic.listenVolume != null) {
         logic.listenVolume!.stop();
@@ -345,7 +366,10 @@ class ComicReadingPage extends StatelessWidget {
           fontSize: 16,
         ),
         child: AnnotatedRegion<SystemUiOverlayStyle>(
-          value: readerOverlayStyle(readerIsDark(context)),
+          value: readerOverlayStyle(
+            chromeIsDark(context),
+            readerChromeColor(context),
+          ),
           child: Scaffold(
           backgroundColor: useDarkBackground ? Colors.black : null,
           endDrawerEnableOpenDragGesture: false,
@@ -440,7 +464,6 @@ class ComicReadingPage extends StatelessWidget {
               return buildErrorView(logic, context);
             }
           }),),
-        
         ),
       );
     });
@@ -551,6 +574,8 @@ class ComicReadingPage extends StatelessWidget {
       logic.urls = res.data;
     }
     logic.isLoading = false;
+    // 开着翻译时, 换章也要整章翻译
+    translateChapter(logic);
     logic.update();
   }
 
@@ -639,6 +664,123 @@ class ComicReadingPage extends StatelessWidget {
     throw "failed";
   }
 
+  /// 整本开启/关闭翻译. 开启后从当前页开始在后台依次翻译本章每一页,
+  /// 之后翻到的章节也会继续翻译.
+  void toggleTranslation(ComicReadingPageLogic logic) {
+    if (logic.translateAll) {
+      logic.translateAll = false;
+      logic.translationBatch?.cancel();
+      logic.translationBatch = null;
+      logic.update();
+      showToast(message: "已关闭翻译".tl);
+      return;
+    }
+    var problem = PageTranslationService.instance.problem;
+    if (problem != null) {
+      showToast(message: translationProblemMessage(problem));
+      if (problem != TranslationProblem.unsupported) {
+        App.globalTo(() => const TranslationSettingsPage());
+      }
+      return;
+    }
+    logic.translateAll = true;
+    translateChapter(logic);
+    logic.update();
+    if (logic.urls.isNotEmpty) {
+      showToast(
+          message: "${"正在翻译本章".tl}: ${logic.urls.length} ${"页".tl}");
+    }
+  }
+
+  /// 在后台把本章每一页依次翻译完, 替换掉另一章的进度.
+  void translateChapter(ComicReadingPageLogic logic) {
+    logic.translationBatch?.cancel();
+    logic.translationBatch = null;
+    if (!logic.translateAll || logic.urls.isEmpty) return;
+    var ep = logic.order;
+    var urls = List.of(logic.urls);
+    var service = PageTranslationService.instance;
+    var batch = BatchTranslation(
+      pages: BatchTranslation.orderFrom(urls.length, logic.index - 1),
+      translatePage: (page) => service.translateInBackground(
+          readingData.loadImage(ep, page, urls[page]),
+          readingData.translationKey(ep, page)),
+    );
+    logic.translationBatch = batch;
+    batch.run().then((_) {
+      if (batch.isCancelled || logic.translationBatch != batch) return;
+      if (batch.stopReason != null) {
+        showToast(
+            message: "${"翻译连续失败, 已停止".tl}: ${batch.stopReason}");
+      } else if (batch.failed > 0) {
+        showToast(
+            message:
+                "${"本章翻译完成".tl}, ${"失败".tl}: ${batch.failed} ${"页".tl}");
+      } else {
+        showToast(message: "本章翻译完成".tl);
+      }
+    });
+  }
+
+  /// 长按翻译按钮: 针对当前页的操作.
+  void showTranslationMenu(ComicReadingPageLogic logic) {
+    var service = PageTranslationService.instance;
+    var index = logic.index - 1;
+    var pageKey = index >= 0 && index < logic.urls.length
+        ? readingData.translationKey(logic.order, index)
+        : null;
+    var status = pageKey == null ? null : service.statusOf(pageKey);
+    showDialog<void>(
+      context: App.globalContext!,
+      builder: (context) => SimpleDialog(
+        title: Text("翻译".tl),
+        children: [
+          if (status?.state == PageTranslationState.failed)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: Text(
+                "${"这一页翻译失败".tl}: ${status!.message ?? ""}",
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+          if (status?.state == PageTranslationState.noText)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: Text("这一页没有需要翻译的文字".tl),
+            ),
+          if (logic.translationBatch case var batch?)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: Text(
+                "${"本章已翻译".tl}: ${batch.finished} / ${batch.total}"
+                "${batch.failed > 0 ? ", ${"失败".tl}: ${batch.failed}" : ""}",
+              ),
+            ),
+          if (logic.translateAll && pageKey != null)
+            SimpleDialogOption(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await service.forget(pageKey);
+                // 丢掉内存里的副本, 让这一页重新加载
+                BaseImageProvider.clearCache();
+                PaintingBinding.instance.imageCache.clear();
+                PaintingBinding.instance.imageCache.clearLiveImages();
+                logic.update();
+              },
+              child: Text("重新翻译这一页".tl),
+            ),
+          SimpleDialogOption(
+            onPressed: () {
+              Navigator.of(context).pop();
+              App.globalTo(() => const TranslationSettingsPage());
+            },
+            child: Text("翻译设置".tl),
+          ),
+        ],
+      ),
+    );
+  }
+
   void share() async {
     var logic = StateController.find<ComicReadingPageLogic>();
     int? index = logic.index - 1;
@@ -702,15 +844,16 @@ class ComicReadingPage extends StatelessWidget {
             tag: "FAB",
             child: StateBuilder<ComicReadingPageLogic>(
               id: "FAB",
-              builder: (logic) {
+              // 用 Builder 拿一个层级在本页内的 context：
+              // 传 App.globalContext 时依赖注册在 Navigator 上，
+              // 主题切换后这里的底色/图标色会停在旧配色。
+              builder: (logic) => Builder(builder: (context) {
                 return Container(
                   width: 58,
                   height: 58,
                   clipBehavior: Clip.antiAlias,
                   decoration: BoxDecoration(
-                      color: Theme.of(App.globalContext!)
-                          .colorScheme
-                          .primaryContainer,
+                      color: Theme.of(context).colorScheme.primaryContainer,
                       borderRadius: BorderRadius.circular(16)),
                   child: Stack(
                     children: [
@@ -724,9 +867,7 @@ class ComicReadingPage extends StatelessWidget {
                               child: Icon(
                             Icons.arrow_forward_ios,
                             size: 24,
-                            color: Theme.of(App.globalContext!)
-                                .colorScheme
-                                .onPrimaryContainer,
+                            color: Theme.of(context).colorScheme.onPrimaryContainer,
                           )),
                         ),
                       )),
@@ -736,7 +877,7 @@ class ComicReadingPage extends StatelessWidget {
                         right: 0,
                         height: logic.fABValue,
                         child: ColoredBox(
-                          color: Theme.of(App.globalContext!)
+                          color: Theme.of(context)
                               .colorScheme
                               .surfaceTint
                               .withOpacity(0.2),
@@ -746,7 +887,7 @@ class ComicReadingPage extends StatelessWidget {
                     ],
                   ),
                 );
-              },
+              }),
             ));
     }
     return null;

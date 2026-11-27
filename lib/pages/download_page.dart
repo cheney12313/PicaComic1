@@ -533,7 +533,9 @@ class DownloadPage extends StatelessWidget {
     } else {
       showSideBar(App.globalContext!,
           DownloadedComicInfoView(logic.comics[index], logic),
-          useSurfaceTintColor: true);
+          useSurfaceTintColor: true,
+          // 这个面板没有标题栏, 不自己加顶部内边距的话, 首行文字会顶到系统状态栏下面
+          addTopPadding: true);
     }
   }
 

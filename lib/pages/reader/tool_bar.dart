@@ -193,6 +193,16 @@ extension ToolBar on ComicReadingPage {
                         ),
                       ),
                     Tooltip(
+                      message: "翻译".tl,
+                      child: GestureDetector(
+                        onLongPress: () => showTranslationMenu(logic),
+                        child: IconButton(
+                          icon: _TranslationIcon(logic),
+                          onPressed: () => toggleTranslation(logic),
+                        ),
+                      ),
+                    ),
+                    Tooltip(
                       message: "保存图片".tl,
                       child: IconButton(
                         icon: const Icon(Icons.save_alt),
@@ -218,6 +228,7 @@ extension ToolBar on ComicReadingPage {
           child = Material(
             borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(16), topRight: Radius.circular(16)),
+            color: readerChromeColor(context),
             surfaceTintColor: Theme.of(context).colorScheme.surfaceTint,
             elevation: 3,
             child: child,
@@ -351,7 +362,7 @@ extension ToolBar on ComicReadingPage {
           switchInCurve: Curves.fastOutSlowIn,
           child: comicReadingPageLogic.tools
               ? Material(
-                  color: Theme.of(context).colorScheme.surface,
+                  color: readerChromeColor(context),
                   surfaceTintColor: Theme.of(context).colorScheme.surfaceTint,
                   elevation: 3,
                   shadowColor:
@@ -361,7 +372,10 @@ extension ToolBar on ComicReadingPage {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const ReaderStatusBar(),
+                        // 改用系统状态栏: 用它自身的高度把工具栏内容顶到状态栏下方
+                        SizedBox(
+                          height: MediaQuery.of(context).padding.top,
+                        ),
                         Row(
                       children: [
                         Padding(
@@ -473,6 +487,43 @@ extension ToolBar on ComicReadingPage {
           );
         },
       ),
+    );
+  }
+}
+
+/// 翻译按钮的图标: 翻译开启时高亮, 外圈显示本章的后台翻译进度.
+class _TranslationIcon extends StatelessWidget {
+  const _TranslationIcon(this.logic);
+
+  final ComicReadingPageLogic logic;
+
+  @override
+  Widget build(BuildContext context) {
+    var icon = Icon(
+      Icons.translate,
+      color: logic.translateAll ? Theme.of(context).colorScheme.primary : null,
+    );
+    var batch = logic.translationBatch;
+    if (batch == null) return icon;
+    return ListenableBuilder(
+      listenable: batch,
+      builder: (context, _) {
+        if (!batch.isRunning || batch.total == 0) return icon;
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            SizedBox(
+              width: 30,
+              height: 30,
+              child: CircularProgressIndicator(
+                value: batch.finished / batch.total,
+                strokeWidth: 2,
+              ),
+            ),
+            icon,
+          ],
+        );
+      },
     );
   }
 }

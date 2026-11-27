@@ -18,6 +18,8 @@ import 'package:pica_comic/base.dart';
 import 'package:pica_comic/comic_source/built_in/picacg.dart';
 import 'package:pica_comic/comic_source/built_in/jm.dart';
 import 'package:pica_comic/foundation/cache_manager.dart';
+import 'package:pica_comic/foundation/page_translation/page_translation_service.dart';
+import 'package:pica_comic/foundation/page_translation/translation_settings.dart';
 import 'package:pica_comic/foundation/ui_mode.dart';
 import 'package:pica_comic/main.dart';
 import 'package:pica_comic/network/app_dio.dart';
@@ -41,6 +43,7 @@ import '../../network/webdav.dart';
 import '../../tools/background_service.dart';
 import '../../tools/debug.dart';
 import '../welcome_page.dart';
+import 'translation_settings_page.dart';
 import 'package:pica_comic/tools/translations.dart';
 
 part "reading_settings.dart";

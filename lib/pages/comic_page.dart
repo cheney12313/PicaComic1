@@ -1051,8 +1051,12 @@ abstract class BaseComicPage<T extends Object> extends StatelessWidget {
           ),
         ),
       ),
-      onTap: () =>
-          App.globalTo(() => ShowImagePageWithHero(cover!, "image$tag")),
+      onTap: () {
+        // 先收起状态栏再推页面：两个动画并行跑，进页面时状态栏已经在上收了，
+        // 不会出现"页面出来了状态栏还在往下滑"的迟滞感。
+        prepareImageViewerStatusBar();
+        App.globalTo(() => ShowImagePageWithHero(cover!, "image$tag"));
+      },
     );
   }
 

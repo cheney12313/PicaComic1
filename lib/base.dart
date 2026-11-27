@@ -106,7 +106,7 @@ class Appdata {
     "1.0", //74 图片收藏大小
     "", //75 eh profile
     "0", //76 阅读器内固定屏幕方向: 0-禁用, 1-横屏, 2-竖屏
-    "picacg,Eh主页,Eh热门,禁漫主页,禁漫最新,hitomi,绅士漫画,nhentai", //77 探索页面
+    "PicACG随机,PicACG最新,Eh主页,Eh热门,禁漫主页,禁漫最新,hitomi,绅士漫画,nhentai", //77 探索页面
     "0", //78 已下载的eh漫画优先显示副标题
     "6", //79 下载并行
     "1", //80 启动时检查自定义漫画源的更新
@@ -190,6 +190,35 @@ class Appdata {
     if (settings[26].length < 2) {
       settings[26] += "0";
     }
+    migrateExplorePages();
+  }
+
+  /// 旧版本的 picacg 探索页(随机+最新混在一页)已拆分为两个独立页面.
+  /// 这里把老的 "picacg" 就地替换成两个新页面, 顺序和位置保持不变,
+  /// 避免升级后用户的探索页直接空掉. 幂等, 可以重复调用.
+  void migrateExplorePages() {
+    const legacyTitle = "picacg";
+    const newTitles = ["PicACG随机", "PicACG最新"];
+    var pages = settings[77].split(',').where((e) => e.isNotEmpty).toList();
+    if (!pages.contains(legacyTitle)) {
+      if (pages.length != settings[77].split(',').length) {
+        settings[77] = pages.join(',');
+      }
+      return;
+    }
+    var result = <String>[];
+    for (var page in pages) {
+      if (page == legacyTitle) {
+        for (var title in newTitles) {
+          if (!pages.contains(title) && !result.contains(title)) {
+            result.add(title);
+          }
+        }
+      } else if (!result.contains(page)) {
+        result.add(page);
+      }
+    }
+    settings[77] = result.join(',');
   }
 
   Future<void> updateSettings([bool syncData = true]) async {
@@ -369,7 +398,10 @@ class _Settings {
         ? appdata.settings[37]
         : "0";
 
-  List<String> get explorePages => appdata.settings[77].split(',');
+  /// 注意: 配置为空时 "".split(',') 会返回 [''], 会在列表里显示一个空白项,
+  /// 所以这里过滤掉空字符串
+  List<String> get explorePages =>
+      appdata.settings[77].split(',').where((e) => e.isNotEmpty).toList();
 
   set explorePages(List<String> pages) {
     appdata.settings[77] = pages.join(',');

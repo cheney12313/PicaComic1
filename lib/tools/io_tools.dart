@@ -1,10 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
-import 'package:archive/archive_io.dart' hide ZipFile;
+import 'package:archive/archive_io.dart' hide ZipFile, ZLibDecoder;
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_file_dialog/flutter_file_dialog.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pica_comic/base.dart';
@@ -18,6 +20,7 @@ import 'package:pica_comic/network/cookie_jar.dart';
 import 'package:pica_comic/network/download.dart';
 import 'package:pica_comic/network/download_model.dart';
 import 'package:pica_comic/tools/io_extensions.dart';
+import 'package:pica_comic/tools/zip_stream.dart';
 import 'package:zip_flutter/zip_flutter.dart';
 
 import '../foundation/app.dart';
@@ -317,19 +320,32 @@ Future<String?> _exportData(String path, String appdataString,
     }
     if (downloadPath != null) {
       downloadPath = downloadPath.replaceAll('\\', '/');
-      var sourceFolder =
-          downloadPath.substring(0, downloadPath.lastIndexOf('/'));
+      if (downloadPath.endsWith('/')) {
+        downloadPath = downloadPath.substring(0, downloadPath.length - 1);
+      }
+      // 备份包内固定以 download/ 作为顶层目录, 与导入端约定一致.
+      // 不能再用“下载目录的上一级”作基准: 下载目录可被设置为 /sdcard/xxx,
+      // 那样会生成 xxx/... 的路径, 导入时会被整体塞进 download/ 多套一层.
+      final base = downloadPath;
+      final out = outPath.replaceAll('\\', '/');
       void walk(String path) {
         for (var entry in Directory(path).listSync()) {
           if (entry is Directory) {
             walk(entry.path);
           } else {
-            var filePathInZip = entry.path.replaceFirst(sourceFolder, "");
-            if (filePathInZip.startsWith('/') ||
-                filePathInZip.startsWith('\\')) {
-              filePathInZip = filePathInZip.substring(1);
+            final filePath = entry.path.replaceAll('\\', '/');
+            // 输出文件恰好位于下载目录内时跳过, 否则会边写边读自身
+            if (filePath == out) {
+              continue;
             }
-            encode.addFile(filePathInZip, entry.path);
+            var relative = filePath.substring(base.length);
+            if (relative.startsWith('/')) {
+              relative = relative.substring(1);
+            }
+            if (relative.isEmpty) {
+              continue;
+            }
+            encode.addFile('download/$relative', entry.path);
           }
         }
       }
@@ -400,24 +416,70 @@ Future<bool> runExportData(bool includeDownload) async {
   return true;
 }
 
+/// 导入的四个阶段。文案见 [ImportStage.label]，由调用方负责本地化。
+class ImportProgress {
+  const ImportProgress(this.stage, this.done, this.total);
+
+  final ImportStage stage;
+  final int done;
+  final int total;
+
+  /// 本阶段进度 0~1；total 未知（例如 SAF 拿不到文件大小）时为 null，
+  /// 此时界面按"不确定进度"转圈。
+  ///
+  /// 为什么不用全局加权进度：各阶段耗时差别太大（13GB 的复制要一分钟，
+  /// 写入只要几百毫秒），固定权重会让复制阶段几十秒都停在 2%，看着像卡死。
+  /// 现在每个阶段各自从 0 走到 100%，界面同时显示阶段名。
+  double? get fraction => total > 0 ? (done / total).clamp(0.0, 1.0) : null;
+}
+
+enum ImportStage {
+  /// 系统文件选择器把所选文件复制进应用缓存（只有走选择器时才有）
+  copying,
+  extracting,
+  applying,
+  merging;
+
+  String get label {
+    switch (this) {
+      case ImportStage.copying:
+        return "正在读取备份文件";
+      case ImportStage.extracting:
+        return "正在解压数据";
+      case ImportStage.applying:
+        return "正在写入数据";
+      case ImportStage.merging:
+        return "正在合并历史记录";
+    }
+  }
+}
+
 /// 导入用户数据。
 ///
 /// [filePath] 仅 WebDAV 同步时传入；为 null 时弹出文件选择器。
+/// [onProgress] 覆盖全流程：复制 → 解压 → 写入 → 合并。
 ///
 /// 旧实现在任何一步出错都会把异常抛给调用方（而调用方没有 catch），
 /// 导致加载对话框永远关不掉，看起来就是"导入时卡死/闪退"。
 /// 现在所有步骤都做了防护：坏文件、旧版本备份、损坏的子数据库
 /// 最多只是返回 false，不会让 App 卡在不可取消的弹窗里。
-Future<bool> importData([String? filePath]) async {
+Future<bool> importData([String? filePath,
+    void Function(ImportProgress progress)? onProgress]) async {
   final enableCheck = filePath != null;
   final path = (await getApplicationSupportDirectory()).path;
+  var pickedCopy = false;
 
   // 1. 选择文件
   try {
     if (filePath == null) {
       if (App.isMobile) {
-        filePath = await FlutterFileDialog.pickFile(
-            params: const OpenFileDialogParams());
+        // Android 走自己的 SAF 通道：复制阶段就能拿到字节进度。
+        // flutter_file_dialog 把复制藏在插件里，13GB 要静默几十秒。
+        filePath = await _pickBackupFile(
+            (done, total) => onProgress
+                ?.call(ImportProgress(ImportStage.copying, done, total)));
+        // 只有我们自己复制进缓存的文件才删，其它平台的插件路径不碰
+        pickedCopy = Platform.isAndroid && filePath != null;
       } else {
         const XTypeGroup typeGroup = XTypeGroup(label: 'data');
         final XFile? file =
@@ -434,7 +496,25 @@ Future<bool> importData([String? filePath]) async {
     LogManager.addLog(LogLevel.error, "importData", "filePath is null");
     return false;
   }
+  final pickedPath = filePath;
 
+  try {
+    return await _importFromFile(pickedPath, path,
+        enableCheck: enableCheck, onProgress: onProgress);
+  } finally {
+    // 缓存副本是我们自己复制进来的，导入一结束就删：
+    // GB 级的备份留在 cache 里会把用户的存储吃光。
+    if (pickedCopy) {
+      await File(pickedPath).deleteIgnoreError();
+    }
+  }
+}
+
+/// 校验 → 解压到临时目录 → 写入 → 合并。拆出来只是为了用 finally 清理缓存副本。
+Future<bool> _importFromFile(
+    String filePath, String path,
+    {required bool enableCheck,
+    void Function(ImportProgress progress)? onProgress}) async {
   // 2. 基本校验：存在、非空、且真的是 zip（.picadata 就是 zip）
   try {
     final file = File(filePath);
@@ -484,14 +564,14 @@ Future<bool> importData([String? filePath]) async {
 
   String? data;
   try {
-    data = await compute(_importDataTask, <String>[
+    data = await _runImportTask(<String>[
       path,
       filePath,
       tempDir,
       downloadPath,
       appdata.settings[46],
       enableCheck ? "1" : "0",
-    ]);
+    ], onProgress: onProgress);
   } catch (e, s) {
     LogManager.addLog(LogLevel.error, "importData", "$e\n$s");
     data = null;
@@ -507,6 +587,7 @@ Future<bool> importData([String? filePath]) async {
   }
 
   // 4. 解析并校验 appdata
+  onProgress?.call(const ImportProgress(ImportStage.merging, 0, 4));
   Map<String, dynamic> json;
   try {
     final decoded = const JsonDecoder().convert(data);
@@ -542,6 +623,8 @@ Future<bool> importData([String? filePath]) async {
     // 版本号解析失败时按最新版本处理，继续导入
   }
 
+  // 5. 合并：先写 appdata，再合并历史与本地收藏
+  onProgress?.call(const ImportProgress(ImportStage.merging, 1, 4));
   bool dataReadRes;
   try {
     dataReadRes = appdata.readDataFromJson(json);
@@ -555,8 +638,9 @@ Future<bool> importData([String? filePath]) async {
         LogLevel.error, "Appdata", "appdata.readDataFromJson(json) failed");
     return false;
   }
+  onProgress?.call(const ImportProgress(ImportStage.merging, 2, 4));
 
-  // 5. 合并历史与本地收藏：这些子库可能来自旧版本，失败不影响导入结果
+  // 这些子库可能来自旧版本，失败不影响导入结果
   try {
     await LocalFavoritesManager().readData();
     LocalFavoritesManager().updateUI();
@@ -564,12 +648,14 @@ Future<bool> importData([String? filePath]) async {
     LogManager.addLog(
         LogLevel.error, "importData", "failed to read local favorites: $e\n$s");
   }
+  onProgress?.call(const ImportProgress(ImportStage.merging, 3, 4));
   try {
     await HistoryManager().tryUpdateDb();
   } catch (e, s) {
     LogManager.addLog(
         LogLevel.error, "importData", "failed to read history: $e\n$s");
   }
+  onProgress?.call(const ImportProgress(ImportStage.merging, 4, 4));
   return true;
 }
 
@@ -595,47 +681,148 @@ Future<void> _restoreAfterImport() async {
   }
 }
 
-/// 纯 Dart 的 zip 解压（逐条解压，内存只占用单个文件）。
+/// Android 侧的备份选择通道：选完文件由原生分块复制并回传字节进度。
+const _filePickChannel = MethodChannel('pica_comic/filePick');
+
+void Function(int done, int total)? _copyProgress;
+
+/// 让用户选一个备份文件并复制到应用缓存，返回缓存路径；取消返回 null。
 ///
-/// 之所以不用 zip_flutter：它的原生实现在 100MB 级别的备份上会踩坏堆，
-/// 进程直接被 SIGABRT 杀掉，日志里是
-/// `Scudo ERROR: invalid chunk state when deallocating address`。
-void _extractZip(String zipPath, String dest) {
-  final input = InputFileStream(zipPath);
+/// Android 用自己的 SAF 实现，复制阶段能回传进度；其它平台退回
+/// flutter_file_dialog（它的复制在插件内部，拿不到进度）。
+Future<String?> _pickBackupFile(
+    void Function(int done, int total)? onProgress) async {
+  if (!Platform.isAndroid) {
+    return FlutterFileDialog.pickFile(params: const OpenFileDialogParams());
+  }
+  _copyProgress = onProgress;
+  _filePickChannel.setMethodCallHandler((call) async {
+    if (call.method == "progress") {
+      final args = call.arguments;
+      if (args is Map) {
+        _copyProgress?.call((args["done"] as num?)?.toInt() ?? 0,
+            (args["total"] as num?)?.toInt() ?? 0);
+      }
+    }
+    return null;
+  });
   try {
-    final archive = ZipDecoder().decodeBuffer(input);
-    for (final entry in archive) {
-      if (!entry.isFile) {
-        continue;
-      }
-      final name = entry.name.replaceAll('\\', '/');
-      if (name.isEmpty ||
-          name.startsWith('/') ||
-          name.split('/').contains('..')) {
-        continue;
-      }
-      final out = File('$dest/$name');
-      out.parent.createSync(recursive: true);
-      final content = entry.content;
-      if (content is List<int>) {
-        out.writeAsBytesSync(content, flush: true);
-      }
-      // 注意：不要调用 entry.closeSync()，它会关掉共享的输入流，
-      // 下一条会读到错位的数据并抛 "Filter error, bad data"。
-    }
+    return await _filePickChannel.invokeMethod<String>("pickAndCopy");
   } finally {
-    try {
-      input.closeSync();
-    } catch (e) {
-      // ignore
-    }
+    _copyProgress = null;
   }
 }
+
+/// 旧的 zip_flutter / archive 解压路径在大备份上会闪退，这里统一走流式实现。
+Future<void> _extractZip(String zipPath, String dest,
+        {void Function(int done, int total)? onProgress}) =>
+    extractZipStreaming(zipPath, dest, onProgress: onProgress);
+
+/// 在独立 isolate 里跑导入任务，并把解压进度回传到主 isolate。
+///
+/// 不用 `compute`：它只能拿到最终返回值，没法把中间进度传回来。
+/// 这里的消息协议只有两种：
+/// - `[done, total]`：解压字节进度；
+/// - `String`：任务结果（空串表示因版本检查而跳过）。
+///
+/// 出错时 isolate 内的异常走 onError 端口，进程不会因为 isolate 崩掉而
+/// 留下一个永远关不掉的加载框 —— 任何一条路径都把 completer 收口。
+Future<String?> _runImportTask(List<String> args,
+    {void Function(ImportProgress progress)? onProgress}) async {
+  final messages = ReceivePort();
+  final errors = ReceivePort();
+  final exits = ReceivePort();
+  final completer = Completer<String?>();
+  Isolate? isolate;
+
+  messages.listen((msg) {
+    if (completer.isCompleted) {
+      return;
+    }
+    if (msg is Map) {
+      if (msg["t"] == "p") {
+        onProgress?.call(ImportProgress(
+          _stageFromName(msg["s"] as String?),
+          (msg["d"] as num?)?.toInt() ?? 0,
+          (msg["n"] as num?)?.toInt() ?? 0,
+        ));
+        return;
+      }
+      if (msg["t"] == "r") {
+        final value = msg["v"];
+        completer.complete(value is String ? value : null);
+        return;
+      }
+    }
+    completer.complete(null);
+  });
+
+  errors.listen((msg) {
+    if (completer.isCompleted) {
+      return;
+    }
+    final text = msg is List && msg.isNotEmpty ? "${msg[0]}" : "$msg";
+    LogManager.addLog(LogLevel.error, "importData", "isolate error: $text");
+    completer.completeError(Exception(text));
+  });
+
+  // isolate 退出时若还没收到结果（例如被系统杀掉），稍等一下再收口，
+  // 免得结果消息和退出消息跨端口竞争时被误判成失败。
+  exits.listen((_) async {
+    await Future.delayed(const Duration(milliseconds: 300));
+    if (!completer.isCompleted) {
+      LogManager.addLog(
+          LogLevel.error, "importData", "import isolate exited without result");
+      completer.complete(null);
+    }
+  });
+
+  try {
+    isolate = await Isolate.spawn(
+      _importDataTaskEntry,
+      <Object>[messages.sendPort, args],
+      onError: errors.sendPort,
+      onExit: exits.sendPort,
+      errorsAreFatal: true,
+    );
+    return await completer.future;
+  } finally {
+    isolate?.kill(priority: Isolate.immediate);
+    messages.close();
+    errors.close();
+    exits.close();
+  }
+}
+
+/// isolate 入口：跑 [_importDataTask]，进度通过 [SendPort] 回传。
+///
+/// 消息协议（Map）：
+/// - `{"t": "p", "s": 阶段名, "d": 已完成, "n": 总量}`：进度
+/// - `{"t": "r", "v": 结果}`：最终结果
+void _importDataTaskEntry(List<Object> args) async {
+  final port = args[0] as SendPort;
+  final input = args[1] as List<String>;
+  final result = await _importDataTask(input, (stage, done, total) {
+    port.send(<String, Object>{
+      "t": "p",
+      "s": stage.name,
+      "d": done,
+      "n": total,
+    });
+  });
+  port.send(<String, Object>{"t": "r", "v": result});
+}
+
+/// 阶段名反查回枚举；名字对不上（版本不一致）时按解压中处理。
+ImportStage _stageFromName(String? name) => ImportStage.values.firstWhere(
+    (stage) => stage.name == name,
+    orElse: () => ImportStage.extracting);
 
 /// 在独立 isolate 里解压并应用备份，返回 appdata 的 JSON 文本。
 ///
 /// 返回空字符串表示因版本检查而跳过；内容不合法时抛异常，由调用方捕获。
-Future<String> _importDataTask(List<String> args) async {
+Future<String> _importDataTask(List<String> args,
+    [void Function(ImportStage stage, int done, int total)? onProgress]) async {
   final path = args[0];
   final filePath = args[1];
   final tempDir = args[2];
@@ -647,9 +834,10 @@ Future<String> _importDataTask(List<String> args) async {
   if (temp.existsSync()) {
     temp.deleteSync(recursive: true);
   }
-  // 用纯 Dart 的 archive 解压：zip_flutter 的原生实现在大备份上会触发
-  // Scudo 堆损坏（Fatal signal 6 / invalid chunk state），导致直接闪退。
-  _extractZip(filePath, tempDir);
+  // 流式解压：内存占用与备份体积无关，GB 级备份也不会撑爆 isolate。
+  await _extractZip(filePath, tempDir,
+      onProgress: (done, total) =>
+          onProgress?.call(ImportStage.extracting, done, total));
 
   final appdataFile = File("$tempDir/appdata");
   if (!appdataFile.existsSync()) {
@@ -668,6 +856,9 @@ Future<String> _importDataTask(List<String> args) async {
     return "";
   }
 
+  // 后面几步是纯文件操作，也报一下，免得解压完 100% 卡住不动
+  onProgress?.call(ImportStage.applying, 0, 4);
+
   // 旧版本可能把内容放在别的目录名里，统一归到 download 下
   final downloadDir = Directory("$tempDir/download");
   for (var item in temp.listSync()) {
@@ -679,6 +870,7 @@ Future<String> _importDataTask(List<String> args) async {
     }
   }
 
+  onProgress?.call(ImportStage.applying, 1, 4);
   final localFavorite = File("$tempDir/localFavorite");
   if (localFavorite.existsSync()) {
     localFavorite.copySync("$path/localFavorite");
@@ -689,6 +881,7 @@ Future<String> _importDataTask(List<String> args) async {
     }
   }
 
+  onProgress?.call(ImportStage.applying, 2, 4);
   final history = File("$tempDir/history.db");
   if (history.existsSync()) {
     history.copySync("$path/history_temp.db");
@@ -708,6 +901,7 @@ Future<String> _importDataTask(List<String> args) async {
     cookies.copySync("$path/cookies.db");
   }
 
+  onProgress?.call(ImportStage.applying, 3, 4);
   final downloadData = Directory("$tempDir/download");
   if (downloadData.existsSync()) {
     final target = Directory(downloadPath);
@@ -715,8 +909,12 @@ Future<String> _importDataTask(List<String> args) async {
       target.deleteSync(recursive: true);
     }
     target.createSync(recursive: true);
-    await moveDirectory(downloadData, target);
+    // 临时目录位于应用私有空间 (/data), 目标目录通常在公共存储 (/sdcard),
+    // 两者不是同一个文件系统, rename 会抛 EXDEV, 所以只能复制后删除.
+    await copyDirectory(downloadData, target);
+    await downloadData.deleteIgnoreError(recursive: true);
   }
+  onProgress?.call(ImportStage.applying, 4, 4);
 
   return jsonString;
 }

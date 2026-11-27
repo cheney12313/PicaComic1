@@ -143,9 +143,32 @@ void showConfirmDialog(BuildContext context, String title, String content,
 }
 
 class LoadingDialogController {
+  LoadingDialogController([String? message])
+      : message = ValueNotifier<String>(message ?? 'Loading');
+
   void Function()? closeDialog;
 
   bool closed = false;
+
+  /// 弹窗上的文字，可在任务进行中随时改（如 "正在导入 42%"）。
+  final ValueNotifier<String> message;
+
+  /// 有值时环形进度条变成确定进度；null 表示无限转圈。
+  final ValueNotifier<double?> progress = ValueNotifier<double?>(null);
+
+  void setMessage(String value) {
+    if (!closed) {
+      message.value = value;
+    }
+  }
+
+  /// [value] 取 0.0~1.0，越界会被夹紧。
+  void setProgress(double? value) {
+    if (closed) {
+      return;
+    }
+    progress.value = value?.clamp(0.0, 1.0);
+  }
 
   void close() {
     if (closed) {
@@ -166,39 +189,48 @@ LoadingDialogController showLoadingDialog(BuildContext context,
     bool allowCancel = true,
     String? message,
     String cancelButtonText = "Cancel"}) {
-  var controller = LoadingDialogController();
+  var controller = LoadingDialogController(message);
 
   var loadingDialogRoute = DialogRoute(
       context: context,
       barrierDismissible: barrierDismissible,
       builder: (BuildContext context) {
         return Dialog(
-          child: Container(
-            width: 100,
-            padding: const EdgeInsets.all(16.0),
-            child: Row(
-              children: [
-                const SizedBox(
-                  width: 30,
-                  height: 30,
-                  child: CircularProgressIndicator(),
+          child: ValueListenableBuilder<double?>(
+            valueListenable: controller.progress,
+            builder: (context, progress, _) => ValueListenableBuilder<String>(
+              valueListenable: controller.message,
+              builder: (context, message, __) => Container(
+                constraints:
+                    const BoxConstraints(minWidth: 100, maxWidth: 320),
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 30,
+                      height: 30,
+                      child: CircularProgressIndicator(value: progress),
+                    ),
+                    const SizedBox(
+                      width: 16,
+                    ),
+                    Flexible(
+                      child: Text(
+                        message,
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                    ),
+                    if (allowCancel)
+                      TextButton(
+                          onPressed: () {
+                            controller.close();
+                            onCancel?.call();
+                          },
+                          child: Text(cancelButtonText.tl))
+                  ],
                 ),
-                const SizedBox(
-                  width: 16,
-                ),
-                Text(
-                  message ?? 'Loading',
-                  style: const TextStyle(fontSize: 16),
-                ),
-                const Spacer(),
-                if (allowCancel)
-                  TextButton(
-                      onPressed: () {
-                        controller.close();
-                        onCancel?.call();
-                      },
-                      child: Text(cancelButtonText.tl))
-              ],
+              ),
             ),
           ),
         );

@@ -499,7 +499,29 @@ class _SetExplorePagesState extends State<SetExplorePages> {
             icon: const Icon(Icons.add),
           )
       ],
-      body: view,
+      body: Column(
+        children: [
+          if (appdata.appSettings.explorePages.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+              child: Row(
+                children: [
+                  Icon(Icons.drag_indicator,
+                      size: 16, color: Theme.of(context).colorScheme.outline),
+                  const SizedBox(width: 6),
+                  Text(
+                    "长按条目拖动可调整顺序".tl,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          Expanded(child: view),
+        ],
+      ),
     );
   }
 }
@@ -576,11 +598,19 @@ void importDataSetting(BuildContext context) {
               TextButton(
                   onPressed: () async {
                     App.globalBack();
-                    final dialog =
-                        showLoadingDialog(context, allowCancel: false);
+                    final dialog = showLoadingDialog(context,
+                        allowCancel: false, message: "正在导入数据".tl);
                     var ok = false;
                     try {
-                      ok = await importData();
+                      ok = await importData(null, (progress) {
+                        // 进度跨 isolate 回传，这里只负责刷 UI
+                        final fraction = progress.fraction;
+                        dialog.setProgress(fraction);
+                        dialog.setMessage(fraction == null
+                            ? progress.stage.label.tl
+                            : "${progress.stage.label.tl} "
+                                "${(fraction * 100).round()}%");
+                      });
                     } catch (e) {
                       // importData 内部已兜底，这里再拦一层：
                       // 无论如何都要把不可取消的加载弹窗关掉，否则 App 会一直卡住

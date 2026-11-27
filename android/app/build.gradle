@@ -46,6 +46,19 @@ android {
         coreLibraryDesugaringEnabled true
     }
 
+    // 图片翻译用的 onnxruntime-android 会带进 armeabi-v7a(约 14MB) 和
+    // x86_64(约 23MB) 的运行库. Flutter 只出 arm64-v8a 和 x86_64, 前者设备
+    // 根本用不上, 后者只服务模拟器和少量 x86 设备(那些设备上翻译会显示不支持).
+    packaging {
+        jniLibs {
+            excludes += [
+                'lib/armeabi-v7a/**',
+                'lib/x86_64/libonnxruntime.so',
+                'lib/x86_64/libonnxruntime4j_jni.so',
+            ]
+        }
+    }
+
     kotlinOptions {
         jvmTarget = JavaVersion.VERSION_17
     }
@@ -106,4 +119,7 @@ flutter {
 dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
     implementation 'com.google.android.gms:play-services-base:18.3.0'
+    // 图片翻译: 只用它自带的 libonnxruntime.so, 通过 FFI 调用
+    // (lib/foundation/page_translation/ort.dart)
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.23.0'
 }

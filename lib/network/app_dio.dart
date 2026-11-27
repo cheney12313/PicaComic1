@@ -238,4 +238,8 @@ Dio logDio([BaseOptions? options, bool http2 = false]) {
   return dio;
 }
 
+/// 不记录日志的 dio. 请求里带着 API key(翻译服务等), 不能写进网络日志,
+/// 也不能走带重试和 cookie 处理的适配器.
+Dio plainDio([BaseOptions? options]) => Dio(options);
+
 

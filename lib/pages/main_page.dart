@@ -83,8 +83,10 @@ class MainPageState extends State<MainPage> {
   List<Widget> get _pages => [
         const MePage(),
         FavoritesPage(),
+        // key 里带上探索页的完整配置, 这样在设置里调整标签排序/增删之后,
+        // 探索页会被重建, 顶部标签立即按新顺序显示
         ExplorePage(
-          key: Key(appdata.appSettings.explorePages.length.toString()),
+          key: Key(appdata.appSettings.explorePages.join(',')),
         ),
         const AllCategoryPage(),
       ];

@@ -27,6 +27,14 @@ class ReadingSettings extends StatefulWidget {
 }
 
 class _ReadingSettingsState extends State<ReadingSettings> {
+  /// 目标语言和正在用的翻译服务, 或者还缺什么.
+  String _translationSummary() {
+    var problem = PageTranslationService.instance.problem;
+    if (problem != null) return translationProblemMessage(problem);
+    var settings = TranslationSettings.instance;
+    return "${settings.target.label} · ${settings.activeProvider!.name}";
+  }
+
   bool pageChangeValue = appdata.settings[0] == "1";
   bool useVolumeKeyChangePage = appdata.settings[7] == "1";
   bool keepScreenOn = appdata.settings[14] == "1";
@@ -81,6 +89,19 @@ class _ReadingSettingsState extends State<ReadingSettings> {
               ),
               onTap: () {},
             ),
+          ListTile(
+            leading: const Icon(Icons.translate),
+            title: Text("图片翻译".tl),
+            subtitle: Text(_translationSummary()),
+            trailing: const Icon(Icons.arrow_right),
+            onTap: () async {
+              Navigator.of(context).pop();
+              await App.globalTo(() => const TranslationSettingsPage());
+              // 换了目标语言或翻译服务, 从当前页开始重新翻译本章
+              if (logic.translateAll) logic.restartTranslation();
+              logic.update();
+            },
+          ),
           ListTile(
             leading: const Icon(Icons.touch_app_outlined),
             title: Text("点按翻页".tl),
@@ -431,6 +452,7 @@ class _ReadingSettingsState extends State<ReadingSettings> {
     appdata.writeData();
     var logic = StateController.find<ComicReadingPageLogic>();
     logic.tools = false;
+    hideReaderSystemBars();
     logic.showSettings = false;
     logic.index = 1;
     logic.pageController = PageController(initialPage: 1);

@@ -92,7 +92,9 @@ class Webdav {
     return true;
   }
 
-  static Future<bool> downloadData([String? config]) async {
+  static Future<bool> downloadData(
+      [String? config,
+      void Function(ImportProgress progress)? onProgress]) async {
     _isOperating = true;
     bool force = config != null;
     try {
@@ -136,7 +138,7 @@ class Webdav {
 
         var cachePath = (await getApplicationCacheDirectory()).path;
         await client.read2File("${configs[3]}$fileName", "$cachePath/picadata");
-        var res = await importData("$cachePath/picadata");
+        var res = await importData("$cachePath/picadata", onProgress);
         return res;
       } catch (e, s) {
         LogManager.addLog(LogLevel.error, "Sync",
@@ -160,7 +162,13 @@ class Webdav {
       message: "同步数据中".tl,
       cancelButtonText: "隐藏".tl,
     );
-    var res = await _retryZone(Webdav.downloadData);
+    var res = await _retryZone(() => Webdav.downloadData(null, (progress) {
+          final fraction = progress.fraction;
+          controller.setProgress(fraction);
+          controller.setMessage(fraction == null
+              ? progress.stage.label.tl
+              : "${progress.stage.label.tl} ${(fraction * 100).round()}%");
+        }));
     await Future.delayed(const Duration(milliseconds: 50));
     if (!res) {
       controller.close();
