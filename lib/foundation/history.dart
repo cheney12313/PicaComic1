@@ -196,47 +196,100 @@ class HistoryManager {
           LogLevel.info, "HistoryManager.tryUpdateDb", "db file not exist");
       return;
     }
-    var db = sqlite3.open(file.path);
-    var newHistory0 = db.select("""
+    Database? db;
+    try {
+      db = sqlite3.open(file.path);
+      final tables = db
+          .select("SELECT name FROM sqlite_master WHERE type='table';")
+          .map((element) => element["name"] as String)
+          .toSet();
+      if (!tables.contains("history")) {
+        LogManager.addLog(LogLevel.warning, "HistoryManager.tryUpdateDb",
+            "no history table in imported database");
+        return;
+      }
+      var newHistory0 = db.select("""
       select * from history
       order by time DESC;
     """);
-    var newHistory =
-        newHistory0.map((element) => History.fromRow(element)).toList();
-    if (file.existsSync()) {
+      var newHistory = <History>[];
+      for (var element in newHistory0) {
+        try {
+          newHistory.add(History.fromRow(element));
+        } catch (e) {
+          // 旧版本备份里的行可能缺少 readEpisode / max_page 等字段
+          LogManager.addLog(LogLevel.warning,
+              "HistoryManager.tryUpdateDb", "skip invalid history row: $e");
+        }
+      }
       var skips = 0;
       for (var history in newHistory) {
-        if (findSync(history.target) == null) {
-          addHistory(history);
-          LogManager.addLog(LogLevel.info, "HistoryManager",
-              "merge history ${history.target}");
-        } else {
-          skips++;
+        try {
+          if (findSync(history.target) == null) {
+            addHistory(history);
+            LogManager.addLog(LogLevel.info, "HistoryManager",
+                "merge history ${history.target}");
+          } else {
+            skips++;
+          }
+        } catch (e) {
+          LogManager.addLog(LogLevel.warning, "HistoryManager.tryUpdateDb",
+              "skip history ${history.target}: $e");
         }
       }
       LogManager.addLog(LogLevel.info, "HistoryManager",
           "merge history, skipped $skips, added ${newHistory.length - skips}");
 
       //import favorite images
-      skips = 0;
-      ImageFavoriteManager.init();
-      var newImages0 = db.select("select * from image_favorites;");
-      var newImages = newImages0.map((e) =>
-          ImageFavorite(e["id"], e["cover"], e["title"], e["ep"], e["page"], jsonDecode(e["other"]))).toList();
-      for (var image in newImages) {
-        if (ImageFavoriteManager.exist(image.id, image.ep, image.page)) {
-          skips++;
-        } else {
-          ImageFavoriteManager.add(image);
-          LogManager.addLog(LogLevel.info, "HistoryManager",
-              "merge favorite image ep ${image.ep} page ${image.page} @ ${image.id}");
+      // 旧版本备份里可能根本没有这张表
+      if (tables.contains("image_favorites")) {
+        skips = 0;
+        ImageFavoriteManager.init();
+        var newImages0 = db.select("select * from image_favorites;");
+        var newImages = <ImageFavorite>[];
+        for (var row in newImages0) {
+          try {
+            newImages.add(ImageFavorite(row["id"], row["cover"], row["title"],
+                row["ep"], row["page"], jsonDecode(row["other"])));
+          } catch (e) {
+            LogManager.addLog(LogLevel.warning,
+                "HistoryManager.tryUpdateDb", "skip invalid image row: $e");
+          }
         }
+        for (var image in newImages) {
+          try {
+            if (ImageFavoriteManager.exist(image.id, image.ep, image.page)) {
+              skips++;
+            } else {
+              ImageFavoriteManager.add(image);
+              LogManager.addLog(LogLevel.info, "HistoryManager",
+                  "merge favorite image ep ${image.ep} page ${image.page} @ ${image.id}");
+            }
+          } catch (e) {
+            LogManager.addLog(LogLevel.warning, "HistoryManager.tryUpdateDb",
+                "skip image ${image.id}: $e");
+          }
+        }
+        LogManager.addLog(LogLevel.info, "HistoryManager",
+            "merge favorite images, skipped $skips, added ${newImages.length - skips}");
       }
-      LogManager.addLog(LogLevel.info, "HistoryManager",
-          "merge favorite images, skipped $skips, added ${newImages.length - skips}");
+    } catch (e, s) {
+      LogManager.addLog(
+          LogLevel.error, "HistoryManager.tryUpdateDb", "$e\n$s");
+    } finally {
+      try {
+        db?.dispose();
+      } catch (e) {
+        // ignore
+      }
+      try {
+        if (file.existsSync()) {
+          file.deleteSync();
+        }
+      } catch (e) {
+        // ignore
+      }
     }
-    db.dispose();
-    file.deleteSync();
   }
 
   Future<void> init() async {

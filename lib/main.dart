@@ -18,6 +18,7 @@ import 'package:pica_comic/pages/main_page.dart';
 import 'package:pica_comic/pages/welcome_page.dart';
 import 'package:pica_comic/tools/block_screenshot.dart';
 import 'package:pica_comic/tools/mouse_listener.dart';
+import 'package:pica_comic/tools/system_ui.dart';
 import 'package:pica_comic/tools/tags_translation.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -143,7 +144,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       } finally {}
     }
     listenMouseSideButtonToBack();
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.manual,
+      overlays: SystemUiOverlay.values,
+    );
     WidgetsBinding.instance.addObserver(this);
     notifications.init();
     if (appdata.settings[12] == "1") {
@@ -155,14 +159,23 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void didChangePlatformBrightness() {
-    setState(() {});
+    // 系统深浅色切换：只 setState 的话，MaterialApp 换了主题但那些没有登记
+    // 主题依赖的组件（例如用别处 context 取色的标签）会停在旧配色，
+    // 表现为"有的地方还是深色，手动切一次主题才正常"。这里和设置页切换
+    // 走同一条路：整棵树重建一次。
+    setState(() => forceRebuild = true);
   }
 
   (ColorScheme, ColorScheme) _generateColorSchemes(
       ColorScheme? light, ColorScheme? dark) {
     Color? color;
-    if (int.parse(appdata.settings[27]) != 0) {
-      color = colors[int.parse(appdata.settings[27]) - 1];
+    final colorIndex = int.parse(appdata.settings[27]);
+    final customColor = int.tryParse(appdata.settings[90]) ?? 0;
+    if (colorIndex == customThemeColorIndex && customColor != 0) {
+      // 自定义 Material 取色：用用户选的种子色生成整套 Material 3 配色
+      color = Color(customColor);
+    } else if (colorIndex > 0 && colorIndex <= colors.length) {
+      color = colors[colorIndex - 1];
     } else {
       color = light?.primary ?? Colors.blueAccent;
     }
@@ -269,21 +282,8 @@ class _SystemUiProvider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    var brightness = Theme.of(context).brightness;
-    SystemUiOverlayStyle systemUiStyle;
-    if (brightness == Brightness.light) {
-      systemUiStyle = SystemUiOverlayStyle.dark.copyWith(
-        statusBarColor: Colors.transparent,
-        systemNavigationBarColor: Colors.transparent,
-      );
-    } else {
-      systemUiStyle = SystemUiOverlayStyle.light.copyWith(
-        statusBarColor: Colors.transparent,
-        systemNavigationBarColor: Colors.transparent,
-      );
-    }
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: systemUiStyle,
+      value: appOverlayStyle(context),
       child: child,
     );
   }

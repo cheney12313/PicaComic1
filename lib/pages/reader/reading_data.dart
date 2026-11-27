@@ -58,13 +58,26 @@ abstract class ReadingData {
     }
   }
 
-  ImageProvider createImageProvider(int ep, int page, String url){
+  /// 传 [translate] 时, 图片加载完成后会走图片翻译; 翻译失败仍显示原图.
+  ImageProvider createImageProvider(int ep, int page, String url,
+      {bool translate = false}){
+    if (translate) {
+      // 用页面本身的标识, 而不是地址: 有些源每次访问同一张图都会给新地址
+      var pageKey = translationKey(ep, page);
+      var service = PageTranslationService.instance;
+      return StreamImageProvider(
+          () => service.wrap(loadImage(ep, page, url), pageKey),
+          service.keyFor(pageKey));
+    }
     if (downloaded && checkEpDownloaded(ep)){
       return FileImageProvider(downloadId, hasEp ? ep : 0, page);
     } else {
       return StreamImageProvider(() => loadImage(ep, page, url), buildImageKey(ep, page, url));
     }
   }
+
+  /// 第 [ep] 章第 [page] 页在图片翻译里的标识.
+  String translationKey(int ep, int page) => "$sourceKey@$downloadId@$ep@$page";
 
   String buildImageKey(int ep, int page, String url) => url;
 

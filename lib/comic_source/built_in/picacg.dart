@@ -7,13 +7,13 @@ import 'package:pica_comic/foundation/app.dart';
 import 'package:pica_comic/foundation/history.dart';
 import 'package:pica_comic/foundation/image_loader/cached_image.dart';
 import 'package:pica_comic/foundation/local_favorites.dart';
+import 'package:pica_comic/network/base_comic.dart';
 import 'package:pica_comic/network/picacg_network/methods.dart';
 import 'package:pica_comic/network/res.dart';
 import 'package:pica_comic/pages/comic_page.dart';
 import 'package:pica_comic/pages/picacg/collections_page.dart';
 import 'package:pica_comic/pages/picacg/comic_page.dart';
 import 'package:pica_comic/pages/reader/comic_reading_page.dart';
-import 'package:pica_comic/tools/translations.dart';
 
 import '../comic_source.dart';
 
@@ -105,24 +105,16 @@ final picacg = ComicSource.named(
     );
   },
   explorePages: [
+    // 随机与最新拆分成了两个独立的页面, 各自滚动, 互不影响
     ExplorePageData.named(
-      title: "picacg",
-      type: ExplorePageType.singlePageWithMultiPart,
-      loadMultiPart: () async {
-        var [res0, res1] = await Future.wait(
-          [network.getRandomComics(), network.getLatest(1)],
-        );
-        if (res0.error) {
-          return Res.fromErrorRes(res0);
-        }
-        if (res1.error) {
-          return Res.fromErrorRes(res1);
-        }
-        return Res([
-          ExplorePagePart("随机".tl, res0.data, "category:random"),
-          ExplorePagePart("最新".tl, res1.data, "category:latest"),
-        ]);
-      },
+      title: "PicACG随机",
+      type: ExplorePageType.multiPageComicList,
+      loadPage: (_) => _loadRandomComics(),
+    ),
+    ExplorePageData.named(
+      title: "PicACG最新",
+      type: ExplorePageType.multiPageComicList,
+      loadPage: (page) => _loadLatestComics(page),
     ),
   ],
   categoryComicsData: CategoryComicsData.named(
@@ -272,6 +264,40 @@ class _PicComicTile extends ComicTile {
 
   @override
   final List<ComicTileMenuOption>? addonMenuOptions;
+}
+
+/// 随机页面: 随机接口一次只返回一小批漫画, 这里连续请求几批并去重,
+/// 避免页面只有零星几十个条目.
+///
+/// 返回的 subData 为 1, 告诉分页逻辑"只有一页", 防止继续下滑时
+/// 因为重复请求随机接口而出现重复内容(刷新按钮可以重新抽取).
+Future<Res<List<BaseComic>>> _loadRandomComics() async {
+  const batchCount = 3;
+  var comics = <BaseComic>[];
+  var ids = <String>{};
+  for (var i = 0; i < batchCount; i++) {
+    var res = await network.getRandomComics();
+    if (res.error) {
+      if (comics.isEmpty) {
+        return Res.fromErrorRes(res);
+      }
+      break;
+    }
+    for (var comic in res.data) {
+      if (ids.add(comic.id)) {
+        comics.add(comic);
+      }
+    }
+  }
+  return Res(comics, subData: 1);
+}
+
+Future<Res<List<BaseComic>>> _loadLatestComics(int page) async {
+  var res = await network.getLatest(page);
+  if (res.error) {
+    return Res.fromErrorRes(res);
+  }
+  return Res<List<BaseComic>>(res.data);
 }
 
 const _categories = [

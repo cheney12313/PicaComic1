@@ -499,7 +499,29 @@ class _SetExplorePagesState extends State<SetExplorePages> {
             icon: const Icon(Icons.add),
           )
       ],
-      body: view,
+      body: Column(
+        children: [
+          if (appdata.appSettings.explorePages.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+              child: Row(
+                children: [
+                  Icon(Icons.drag_indicator,
+                      size: 16, color: Theme.of(context).colorScheme.outline),
+                  const SizedBox(width: 6),
+                  Text(
+                    "长按条目拖动可调整顺序".tl,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          Expanded(child: view),
+        ],
+      ),
     );
   }
 }
@@ -566,7 +588,7 @@ void exportDataSetting(BuildContext context) {
 void importDataSetting(BuildContext context) {
   showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
             title: Text("导入用户数据".tl),
             content: Text("${"将导入设置, 账号, 历史记录, 下载内容, 本地收藏等数据, 现在的所有数据将会被覆盖".tl}"
                 "\n${"如果导入的数据中包含下载数据, 则当前的下载数据也将被覆盖".tl}"),
@@ -574,17 +596,29 @@ void importDataSetting(BuildContext context) {
               TextButton(
                   onPressed: () => App.globalBack(), child: Text("取消".tl)),
               TextButton(
-                  onPressed: () {
+                  onPressed: () async {
                     App.globalBack();
-                    var dialog = showLoadingDialog(context, allowCancel: false);
-                    importData().then((v) {
+                    final dialog = showLoadingDialog(context,
+                        allowCancel: false, message: "正在导入数据".tl);
+                    var ok = false;
+                    try {
+                      ok = await importData(null, (progress) {
+                        // 进度跨 isolate 回传，这里只负责刷 UI
+                        final fraction = progress.fraction;
+                        dialog.setProgress(fraction);
+                        dialog.setMessage(fraction == null
+                            ? progress.stage.label.tl
+                            : "${progress.stage.label.tl} "
+                                "${(fraction * 100).round()}%");
+                      });
+                    } catch (e) {
+                      // importData 内部已兜底，这里再拦一层：
+                      // 无论如何都要把不可取消的加载弹窗关掉，否则 App 会一直卡住
+                      debugPrint("importData failed: $e");
+                    } finally {
                       dialog.close();
-                      if (v) {
-                        showToast(message: "成功导入".tl);
-                      } else {
-                        showToast(message: "导入失败".tl);
-                      }
-                    });
+                    }
+                    showToast(message: ok ? "成功导入".tl : "导入失败".tl);
                   },
                   child: Text("继续".tl))
             ],

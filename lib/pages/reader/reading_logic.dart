@@ -58,6 +58,15 @@ class ComicReadingPageLogic extends StateController {
 
   List<bool> requestedLoadingItems = [];
 
+  /// 是否显示译文. 进入阅读器时关闭, 由工具栏的翻译按钮整本开启.
+  bool translateAll = false;
+
+  /// 开启翻译后, 在后台提前翻译本章的页面.
+  BatchTranslation? translationBatch;
+
+  /// 当前章节第 [index] 页(从 0 开始)是否显示译文.
+  bool isTranslated(int index) => translateAll;
+
   bool haveUsedInitialPage = false;
 
   /// 双页模式下是否在第一页时显示单页
@@ -364,4 +373,7 @@ class ComicReadingPageLogic extends StateController {
   }
 
   late final void Function() openEpsView;
+
+  /// 翻译设置改动后, 从当前页重新翻译本章.
+  late final void Function() restartTranslation;
 }

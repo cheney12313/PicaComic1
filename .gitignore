@@ -45,3 +45,11 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 .vscode/
+
+# 本地签名与打包产物（不要提交）
+/android/key.properties
+/android/app/*.jks
+/android/app/*.keystore
+/dist/
+# 项目根目录下手工归档的 APK
+/*.apk

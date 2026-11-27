@@ -21,6 +21,10 @@ class _ExplorePageState extends State<ExplorePage>
     with TickerProviderStateMixin {
   late TabController controller;
 
+  /// 上一次停留的标签页, 在设置里调整排序后页面会被重建,
+  /// 用它来回到原来那一页, 而不是每次都跳回第一个标签
+  static String? _lastPage;
+
   bool showFB = true;
 
   double location = 0;
@@ -29,6 +33,8 @@ class _ExplorePageState extends State<ExplorePage>
 
   @override
   void initState() {
+    // 兼容旧数据: picacg 探索页已拆分为 "PicACG随机" / "PicACG最新"
+    appdata.migrateExplorePages();
     pages = appdata.appSettings.explorePages;
     var all = ComicSource.sources.map((e) => e.explorePages).expand((e) => e.map((e) => e.title)).toList();
     pages = pages.where((e) => all.contains(e)).toList();
@@ -40,17 +46,48 @@ class _ExplorePageState extends State<ExplorePage>
         appdata.updateSettings();
       }
     }
+    var initialIndex = 0;
+    if (_lastPage != null) {
+      var index = pages.indexOf(_lastPage!);
+      if (index > 0) {
+        initialIndex = index;
+      }
+    }
     controller = TabController(
       length: pages.length,
       vsync: this,
+      initialIndex: initialIndex,
     );
+    controller.addListener(_rememberPage);
     super.initState();
   }
 
+  void _rememberPage() {
+    if (pages.isEmpty) return;
+    var index = controller.index;
+    if (index >= 0 && index < pages.length) {
+      _lastPage = pages[index];
+    }
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
   void refresh() {
-    int page = controller.index;
-    String currentPageId = pages[page];
-    StateController.find<SimpleController>(tag: currentPageId).refresh();
+    if (pages.isEmpty) return;
+    String currentPageId = pages[controller.index];
+    // 漫画列表形式的页面(如 PicACG随机/最新)用的是 ComicsPageLogic,
+    // 其余页面用 SimpleController, 这里两种都兼容
+    var comicsController =
+        StateController.findOrNull<ComicsPageLogic>(tag: currentPageId);
+    if (comicsController != null) {
+      comicsController.refresh();
+      return;
+    }
+    StateController.findOrNull<SimpleController>(tag: currentPageId)?.refresh();
   }
 
   Widget buildFAB() => Material(
@@ -70,6 +107,31 @@ class _ExplorePageState extends State<ExplorePage>
 
   @override
   Widget build(BuildContext context) {
+    if (pages.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.explore_off_outlined,
+              size: 48,
+              color: Theme.of(context).colorScheme.outline,
+            ),
+            const SizedBox(height: 12),
+            Text("还没有选择探索页面".tl),
+            const SizedBox(height: 6),
+            Text(
+              "可在 设置 - 漫画源 - 发现页标签 中添加".tl,
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.outline,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     Widget tabBar = Material(
       child: FilledTabBar(
         tabs: pages.map((e) => buildTab(e)).toList(),
@@ -286,6 +348,10 @@ class _ComicList extends ComicsPage<BaseComic> {
 
   @override
   final String sourceKey;
+
+  /// 探索页里的列表页(如 PicACG随机)支持顶部下拉刷新
+  @override
+  bool get pullToRefresh => true;
 
   @override
   Future<Res<List<BaseComic>>> getComics(int i) {

@@ -99,6 +99,32 @@ class ComicsPageLogic<T> extends StateController {
     message = null;
     update();
   }
+
+  /// 下拉刷新: 不切换成整页 loading, 保留当前列表直到新数据回来后再替换,
+  /// 返回的 Future 在刷新结束时完成, 供 RefreshIndicator 收起步进指示器.
+  Future<void> pullRefresh(Future<Res<List<T>>> Function(int) getComics) async {
+    if (loadingData) return;
+    loadingData = true;
+    update();
+    var res = await getComics(1);
+    loadingData = false;
+    if (res.error) {
+      showToast(message: res.errorMessageWithoutNull);
+      update();
+      return;
+    }
+    comics = res.data;
+    dividedComics = {1: res.data};
+    maxPage = res.subData is int ? res.subData : null;
+    if (res.data.isEmpty) {
+      maxPage = 1;
+    }
+    current = 1;
+    message = null;
+    loading = false;
+    _emptyPageCount = 0;
+    update();
+  }
 }
 
 /// 漫画列表页面
@@ -134,6 +160,9 @@ abstract class ComicsPage<T extends BaseComic> extends StatelessWidget {
 
   List<ComicTileMenuOption>? get addonMenuOptions => null;
 
+  /// 是否支持顶部下拉刷新
+  bool get pullToRefresh => false;
+
   /// 刷新页面
   void refresh() {
     StateController.find<ComicsPageLogic<T>>(tag: tag).refresh();
@@ -162,10 +191,13 @@ abstract class ComicsPage<T extends BaseComic> extends StatelessWidget {
       return widget;
     }
 
+    ComicsPageLogic<T>? logicRef;
+
     Widget body = StateBuilder<ComicsPageLogic<T>>(
         init: ComicsPageLogic<T>(),
         tag: tag,
         builder: (logic) {
+          logicRef = logic;
           if (logic.dividedComics?[logic.current] == null &&
               logic.message == null &&
               appdata.settings[25] != "0") {
@@ -358,6 +390,18 @@ abstract class ComicsPage<T extends BaseComic> extends StatelessWidget {
     if (header != null && UiMode.m1(context)) {
       body = SafeArea(
         bottom: false,
+        child: body,
+      );
+    }
+
+    if (pullToRefresh) {
+      body = RefreshIndicator(
+        key: const Key("pullToRefresh"),
+        onRefresh: () async {
+          var logic = logicRef;
+          if (logic == null) return;
+          await logic.pullRefresh(getComics);
+        },
         child: body,
       );
     }

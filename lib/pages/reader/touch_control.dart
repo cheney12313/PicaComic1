@@ -159,10 +159,11 @@ class TapController {
       }
       logic.tools = !logic.tools;
       logic.update();
+      // 工具栏显隐联动系统状态栏
       if (logic.tools) {
-        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+        showReaderSystemBars();
       } else {
-        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
+        hideReaderSystemBars();
       }
       return;
     }
@@ -324,12 +325,13 @@ class TapController {
     if (flag && flag2) {
       logic.tools = !logic.tools;
       logic.update(["ToolBar"]);
+      // 工具栏和系统状态栏一起出现、一起收起；退出阅读器时由 dispose 恢复系统栏
       if (logic.tools) {
-        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+        showReaderSystemBars();
         StateController.findOrNull<WindowFrameController>()?.resetTheme();
       } else {
-        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
-        if(appdata.settings[81] == "1") {
+        hideReaderSystemBars();
+        if (appdata.settings[81] == "1") {
           StateController.findOrNull<WindowFrameController>()?.setDarkTheme();
         }
       }

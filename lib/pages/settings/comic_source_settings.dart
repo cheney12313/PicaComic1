@@ -67,6 +67,14 @@ class _ComicSourceSettingsState extends State<ComicSourceSettings> {
     return Column(
       children: [
         buildCard(context),
+        const Divider(),
+        ListTile(
+          leading: const Icon(Icons.explore_outlined),
+          title: Text("发现页标签".tl),
+          subtitle: Text("调整发现页顶部标签的排序, 并增删页面".tl),
+          trailing: const Icon(Icons.arrow_right),
+          onTap: () => setExplorePages(context),
+        ),
         const _BuiltInSources(),
         if(appdata.appSettings.isComicSourceEnabled("picacg"))
           const PicacgSettings(false).withDivider(),
@@ -507,6 +515,7 @@ void _validatePages() {
   appdata.appSettings.networkFavorites = networkFavorites;
 
   appdata.updateSettings();
+  MyApp.updater?.call();
 }
 
 void _addAllPagesWithComicSource(ComicSource source) {
@@ -535,4 +544,5 @@ void _addAllPagesWithComicSource(ComicSource source) {
   appdata.appSettings.networkFavorites = networkFavorites.toSet().toList();
 
   appdata.updateSettings();
+  MyApp.updater?.call();
 }

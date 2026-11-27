@@ -40,7 +40,7 @@ class MePage extends StatelessWidget {
                             const SizedBox(
                               height: 12,
                             ),
-                            buildAccount(width),
+                            buildAccount(context, width),
                             const SizedBox(
                               height: 12,
                             ),
@@ -61,7 +61,7 @@ class MePage extends StatelessWidget {
                             const SizedBox(
                               height: 12,
                             ),
-                            buildTools(width),
+                            buildTools(context, width),
                           ],
                         ),
                       ),
@@ -71,7 +71,7 @@ class MePage extends StatelessWidget {
                   const SizedBox(
                     height: 12,
                   ),
-                  buildAccount(width),
+                  buildAccount(context, width),
                   const SizedBox(
                     height: 12,
                   ),
@@ -83,7 +83,7 @@ class MePage extends StatelessWidget {
                   const SizedBox(
                     height: 12,
                   ),
-                  buildTools(width),
+                  buildTools(context, width),
                 ],
               ],
             ),
@@ -158,7 +158,7 @@ class MePage extends StatelessWidget {
     );
   }
 
-  Widget buildAccount(double width) {
+  Widget buildAccount(BuildContext context, double width) {
     var accounts = findAccounts();
 
     Widget buildItem(String name) {
@@ -166,7 +166,9 @@ class MePage extends StatelessWidget {
         height: 24,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: Theme.of(App.globalContext!).colorScheme.primaryContainer,
+          // 必须用本页的 context 取色：传 App.globalContext 时依赖注册在
+          // Navigator 上，本页不会随主题变化重建，切换深浅色后标签会停在旧配色
+          color: Theme.of(context).colorScheme.primaryContainer,
           borderRadius: BorderRadius.circular(12),
         ),
         child: Text(
@@ -209,13 +211,13 @@ class MePage extends StatelessWidget {
     );
   }
 
-  Widget buildTools(double width) {
+  Widget buildTools(BuildContext context, double width) {
     Widget buildItem(String name) {
       return Container(
         height: 24,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: Theme.of(App.globalContext!).colorScheme.secondaryContainer,
+          color: Theme.of(context).colorScheme.secondaryContainer,
           borderRadius: BorderRadius.circular(12),
         ),
         child: Text(

@@ -294,6 +294,9 @@ class LocalFavoritesManager {
 
   late Database _db;
 
+  /// 防止 clearAll() -> init() -> readData() 递归调用（会栈溢出闪退）
+  bool _reading = false;
+
   Future<void> init() async {
     _db = sqlite3.open("${App.dataPath}/local_favorite.db");
     _checkAndCreate();
@@ -403,6 +406,23 @@ class LocalFavoritesManager {
   /// This function will delete current database, then create a new one, finally
   /// import data.
   Future<void> readData() async {
+    // clearAll() 内部会调用 init()，init() 又会调用 readData()；
+    // 这里不加保护会无限递归，导入旧版备份时直接栈溢出闪退。
+    if (_reading) {
+      return;
+    }
+    _reading = true;
+    try {
+      await _readData();
+    } catch (e, s) {
+      LogManager.addLog(
+          LogLevel.error, "LocalFavoritesManager.readData", "$e\n$s");
+    } finally {
+      _reading = false;
+    }
+  }
+
+  Future<void> _readData() async {
     var file = File("${App.dataPath}/localFavorite");
     if (file.existsSync()) {
       Map<String, List<FavoriteItem>> allComics = {};
@@ -433,62 +453,102 @@ class LocalFavoritesManager {
       } catch (e, s) {
         LogManager.addLog(LogLevel.error, "IO", "$e\n$s");
       } finally {
-        file.deleteSync();
+        try {
+          if (file.existsSync()) {
+            file.deleteSync();
+          }
+        } catch (e) {
+          // ignore
+        }
       }
     } else if ((file = File("${App.dataPath}/local_favorite_temp.db"))
         .existsSync()) {
-      var tmp_db = sqlite3.open(file.path);
+      Database? tmpDb;
+      try {
+        tmpDb = sqlite3.open(file.path);
 
-      final folders = tmp_db
-          .select("SELECT name FROM sqlite_master WHERE type='table';")
-          .map((element) => element["name"] as String)
-          .toList();
-      folders.remove('folder_sync');
-      folders.remove('folder_order');
-      LogManager.addLog(LogLevel.info, "LocalFavoritesManager.readData",
-          "read folders from local database $folders");
-      var folderToOrder = <String, int>{};
-      for (var folder in folders) {
-        var res = tmp_db.select("""
+        final tables = tmpDb
+            .select("SELECT name FROM sqlite_master WHERE type='table';")
+            .map((element) => element["name"] as String)
+            .toSet();
+        final folders = tables
+            .where((name) =>
+                name != 'folder_sync' &&
+                name != 'folder_order' &&
+                !name.startsWith('sqlite_'))
+            .toList();
+        LogManager.addLog(LogLevel.info, "LocalFavoritesManager.readData",
+            "read folders from local database $folders");
+        // 旧版本导出的库没有 folder_order 表，直接查会抛 no such table
+        final hasOrder = tables.contains('folder_order');
+        var folderToOrder = <String, int>{};
+        for (var folder in folders) {
+          var order = 0;
+          if (hasOrder) {
+            var res = tmpDb.select("""
         select * from folder_order
         where folder_name == ?;
       """, [folder]);
-        if (res.isNotEmpty) {
-          folderToOrder[folder] = res.first["order_value"];
-        } else {
-          folderToOrder[folder] = 0;
+            if (res.isNotEmpty) {
+              order = (res.first["order_value"] as int?) ?? 0;
+            }
+          }
+          folderToOrder[folder] = order;
         }
-      }
-      folders.sort((a, b) {
-        return folderToOrder[a]! - folderToOrder[b]!;
-      });
-      var res = <FavoriteItemWithFolderInfo>[];
-      for (final folder in folders) {
-        var comics = tmp_db.select("""
+        folders.sort((a, b) {
+          return (folderToOrder[a] ?? 0) - (folderToOrder[b] ?? 0);
+        });
+        var res = <FavoriteItemWithFolderInfo>[];
+        for (final folder in folders) {
+          var comics = tmpDb.select("""
         select * from "$folder";
       """);
-        LogManager.addLog(LogLevel.info, "LocalFavoritesManager.readData",
-            "read $folder gets ${comics.length} comics");
-        res.addAll(comics.map((element) =>
-            FavoriteItemWithFolderInfo(FavoriteItem.fromRow(element), folder)));
-      }
-      var skips = 0;
-      for (var comic in res) {
-        if (!folderNames.contains(comic.folder)) {
-          createFolder(comic.folder);
+          LogManager.addLog(LogLevel.info, "LocalFavoritesManager.readData",
+              "read $folder gets ${comics.length} comics");
+          for (var element in comics) {
+            try {
+              res.add(FavoriteItemWithFolderInfo(
+                  FavoriteItem.fromRow(element), folder));
+            } catch (e) {
+              // 单行数据损坏不影响整个导入
+              LogManager.addLog(LogLevel.error,
+                  "LocalFavoritesManager.readData", "skip invalid row: $e");
+            }
+          }
         }
-        if (!comicExists(comic.folder, comic.comic.target, comic.comic.type.key)) {
-          addComic(comic.folder, comic.comic);
-          LogManager.addLog(LogLevel.info, "LocalFavoritesManager",
-              "add comic ${comic.comic.target} to ${comic.folder}");
-        } else {
-          skips++;
+        var skips = 0;
+        for (var comic in res) {
+          if (!folderNames.contains(comic.folder)) {
+            createFolder(comic.folder);
+          }
+          if (!comicExists(
+              comic.folder, comic.comic.target, comic.comic.type.key)) {
+            addComic(comic.folder, comic.comic);
+            LogManager.addLog(LogLevel.info, "LocalFavoritesManager",
+                "add comic ${comic.comic.target} to ${comic.folder}");
+          } else {
+            skips++;
+          }
+        }
+        LogManager.addLog(LogLevel.info, "LocalFavoritesManager",
+            "skipped $skips comics, total ${res.length}");
+      } catch (e, s) {
+        LogManager.addLog(
+            LogLevel.error, "LocalFavoritesManager.readData", "$e\n$s");
+      } finally {
+        try {
+          tmpDb?.dispose();
+        } catch (e) {
+          // ignore
+        }
+        try {
+          if (file.existsSync()) {
+            file.deleteSync();
+          }
+        } catch (e) {
+          // ignore
         }
       }
-      LogManager.addLog(LogLevel.info, "LocalFavoritesManager",
-          "skipped $skips comics, total ${res.length}");
-      tmp_db.dispose();
-      file.deleteSync();
     } else {
       LogManager.addLog(LogLevel.info, "LocalFavoritesManager",
           "no local favorites db file found");
